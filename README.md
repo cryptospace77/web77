@@ -1,4 +1,4 @@
-# CryptoSpace77 — web77
+# CryptoSpace77 â€” web77
 
 Crypto Space 77 is a lightweight, open-source, decentralized, social media web frontend for the hive blockchain.
 
@@ -20,7 +20,7 @@ Visit the live version:
 
 https://cryptospace77.com/
 
-## Run Locally
+## Run locally
 
 Clone or download the repository, then start the included Python server:
 
@@ -34,7 +34,7 @@ Then open the 127.0.0.1:8777 in your web browser.
 
 ## Status
 
-> ?? **Alpha software:** CryptoSpace77 is currently under active alpha development. Features may change, bugs may occur, and things may break. **Use at your own risk.**
+**Alpha software:** CryptoSpace77 is currently under active alpha development. Features may change, bugs may occur, and things may break. **Use at your own risk.**
 
 ## Hive blockchain
 
