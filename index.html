@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    (function () {
+      var path = location.pathname || "/";
+      try {
+        path = decodeURIComponent(path);
+      } catch (e) {}
+      var parts = path.split("/").filter(Boolean);
+      var last = parts.length ? parts[parts.length - 1] : "";
+      var hash = location.protocol === "file:" || /index\.html$/i.test(last);
+      window.__CS77_HASH__ = hash;
+      var base;
+      if (hash) {
+        base = location.href.split("#")[0].split("?")[0].replace(/[^/]*$/, "");
+      } else {
+        var routes = {
+          feed: 1,
+          created: 1,
+          latest: 1,
+          trending: 1,
+          hot: 1,
+          tags: 1,
+          communities: 1,
+          publish: 1,
+          welcome: 1,
+          imprint: 1,
+          c: 1,
+        };
+        var i = 0;
+        for (; i < parts.length; i++) {
+          var seg = parts[i];
+          if (seg.charAt(0) === "@") break;
+          if (routes[String(seg).toLowerCase()]) break;
+        }
+        base = "/" + (i ? parts.slice(0, i).join("/") + "/" : "");
+      }
+      window.__CS77_BASE__ = base;
+      var el = document.createElement("base");
+      el.href = base;
+      document.head.insertBefore(el, document.head.firstChild);
+    })();
+  </script>
+  <title>Crypto Space 77 — Decentralized Social Media</title>
+  <meta name="description" content="Own your voice. Build, earn, and connect without censorship, gatekeepers, and algos.">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&family=Orbitron:wght@400;600;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="bg-grid"></div>
+  <div class="bg-hex bg-hex-bl" aria-hidden="true"></div>
+  <div class="bg-hex bg-hex-br" aria-hidden="true"></div>
+  <div class="scanlines"></div>
+
+  <header class="header">
+    <div class="logo-wrap" id="logoWrap">
+      <div class="logo-menu" id="logoMenu">
+        <button type="button" class="logo-trigger" id="logoTrigger" aria-haspopup="true" aria-expanded="false" aria-controls="logoDropdown" aria-label="Open feed, tags, and communities">
+          <svg class="app-logo" width="60" height="60" viewBox="0 0 128 128" role="img" aria-label="Crypto Space 77 hexagonal logo">
+            <polygon
+              points="108,64 86,102.11 42,102.11 20,64 42,25.89 86,25.89"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="5.5"
+              stroke-linejoin="miter"
+            />
+          </svg>
+        </button>
+        <div class="logo-dropdown" id="logoDropdown">
+          <nav class="logo-dropdown-panel" aria-label="Feed, tags, and communities">
+            <a class="logo-dropdown-link" id="logoProfileLink" href="#" hidden>Profile</a>
+            <a class="logo-dropdown-link" id="logoWalletLink" href="#" hidden>Wallet</a>
+            <a class="logo-dropdown-link" id="logoWelcomeLink" href="/welcome">Welcome</a>
+            <a class="logo-dropdown-link" id="logoFeedLink" href="/feed">Feed</a>
+            <a class="logo-dropdown-link" id="logoTagsLink" href="/tags">Tags</a>
+            <a class="logo-dropdown-link" id="logoCommunitiesLink" href="/communities">Communities</a>
+            <div class="logo-dropdown-favs" id="logoFavTags" hidden></div>
+            <div class="logo-dropdown-favs" id="logoFavCommunities" hidden></div>
+            <div class="node-menu node-menu-in-menu">
+              <button type="button" class="status-pill" aria-haspopup="listbox" aria-expanded="false" aria-label="Switch Hive node">
+                <span class="dot"></span>
+                <span class="node-label">api.hive.blog</span>
+              </button>
+              <div class="node-dropdown">
+                <div class="node-dropdown-panel" role="listbox" aria-label="Hive API nodes"></div>
+              </div>
+            </div>
+          </nav>
+        </div>
+      </div>
+      <div class="logo-brand" id="logoBrand"><a class="brand" href="/" title="Crypto Space 77"><h1>Crypto Space<span class="brand-77">77</span></h1></a></div>
+    </div>
+    <div class="header-right">
+      <div class="node-menu">
+        <button type="button" class="status-pill" aria-haspopup="listbox" aria-expanded="false" aria-label="Switch Hive node">
+          <span class="dot"></span>
+          <span id="nodeLabel" class="node-label">api.hive.blog</span>
+        </button>
+        <div class="node-dropdown">
+          <div class="node-dropdown-panel" role="listbox" aria-label="Hive API nodes"></div>
+        </div>
+      </div>
+      <div id="queueSlot" class="queue-slot" hidden></div>
+      <div id="sessionSlot"></div>
+    </div>
+  </header>
+
+  <section class="welcome-flyer" id="welcomeFlyer" hidden aria-labelledby="welcomeTitle">
+    <h2 class="welcome-title" id="welcomeTitle">Decentralized Social Media</h2>
+    <p class="welcome-lead">Own your voice. Build, earn, and connect without censorship, gatekeepers, and algos.</p>
+    <a class="btn-primary welcome-join" href="https://hivedapps.com/" target="_blank" rel="noopener noreferrer">Join</a>
+    <button type="button" class="welcome-down" id="welcomeDown" aria-label="Scroll to the feed">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          d="M6 9l6 6 6-6"
+        />
+      </svg>
+    </button>
+  </section>
+
+  <div class="app">
+    <div class="error-banner" id="errorBanner" hidden>
+      <span class="error-icon">⚠</span>
+      <span id="errorText"></span>
+    </div>
+
+    <main id="view"></main>
+  </div>
+
+  <footer class="footer">
+     <div class="social-links">
+      <a class="btn-social btn-social-red" href="@vikisecrets" target="_blank">@vikisecrets</a>
+      <a class="btn-social btn-social-yellow" href="https://vikisecrets.com/" target="_blank">vikisecrets.com</a>
+    </div> 
+    <div class="footer-meta">
+      <span><a class="footer-link" href="/">crypto space 77</a></span>
+      <span class="sep">|</span>
+      <span>by <a class="footer-link" href="@vikisecrets"vikisecrets>vikisecrets</a></span>
+      <span class="sep">|</span>
+      <span class="footer-version" id="appVersion">version</span>
+      <span class="sep">|</span>
+      <span><a class="footer-link" href="/imprint">imprint</a></span>
+    </div>
+  </footer>
+
+  <a class="btn-primary publish-fab" id="publishFab" href="/publish" aria-label="Publish">
+    <span class="publish-fab-label">Publish</span>
+    <svg class="publish-fab-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.25"
+        stroke-linecap="round"
+        d="M12 7.5v9M7.5 12h9"
+      />
+    </svg>
+  </a>
+
+  <button type="button" class="scroll-top" id="scrollTopBtn" aria-label="Scroll to top">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        d="M6 14l6-6 6 6"
+      />
+    </svg>
+  </button>
+
+  <div class="overlay" id="loginOverlay" hidden>
+    <div class="panel overlay-card login-card">
+      <h2>Login</h2>
+      <p class="login-lead">Use hive keychain (recommended) or enter your posting key.</p>
+      <label class="login-label" for="loginUser">Username</label>
+      <input id="loginUser" type="text" autocomplete="username" placeholder="username" spellcheck="false" autocapitalize="off">
+      <label class="login-label" for="loginKey">Posting key <span class="login-optional">optional</span></label>
+      <input id="loginKey" type="password" autocomplete="off" placeholder="posting key" spellcheck="false">
+      <p class="login-hint">A posting key is stored in this browser as a non-extractable key and used to sign hive calls.</p>
+      <p id="loginStatus"></p>
+      <div class="overlay-actions">
+        <button type="button" class="btn-primary" id="loginConnect">Connect</button>
+        <button type="button" class="btn-ghost" id="loginCancel">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="walletOverlay" hidden>
+    <div class="panel overlay-card login-card">
+      <h2 id="walletOpTitle">Stake hive</h2>
+      <p class="login-lead" id="walletOpLead"></p>
+      <label class="login-label" for="walletAmount">Amount</label>
+      <div class="wallet-amount-row">
+        <input id="walletAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.000" spellcheck="false">
+        <button type="button" class="btn-ghost" id="walletOpMax">Max</button>
+      </div>
+      <p id="walletOpStatus"></p>
+      <div class="overlay-actions">
+        <button type="button" class="btn-primary" id="walletOpSubmit">Confirm</button>
+        <button type="button" class="btn-ghost" id="walletOpCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="nodeOverlay" hidden>
+    <div class="panel overlay-card login-card" role="dialog" aria-modal="true" aria-labelledby="nodeOverlayTitle">
+      <h2 id="nodeOverlayTitle">Custom node</h2>
+      <p class="login-lead">Connect to custom hive API server.</p>
+      <label class="login-label" for="nodeServer">HAF server</label>
+      <input id="nodeServer" type="text" inputmode="url" autocomplete="off" placeholder="api.hive.blog" spellcheck="false" autocapitalize="off">
+      <p id="nodeStatus" role="status"></p>
+      <div class="overlay-actions">
+        <button type="button" class="btn-primary" id="nodeTest">Connect</button>
+        <button type="button" class="btn-ghost" id="nodeCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="publishOverlay" hidden>
+    <div class="panel overlay-card publish-card" id="publishPage">
+      <h2>New post</h2>
+      <div class="publish-dest" id="publishDest">
+        <span class="publish-dest-label">Publish in</span>
+        <button type="button" class="publish-dest-btn" id="publishDestBtn" aria-haspopup="listbox" aria-expanded="false">
+          <img class="avatar" id="publishDestAvatar" alt="" width="22" height="22">
+          <span id="publishDestName">My blog</span>
+        </button>
+        <div class="publish-dest-menu" id="publishDestMenu" hidden role="listbox"></div>
+      </div>
+      <input id="publishTitle" class="publish-title-input" type="text" maxlength="255" placeholder="Title" autocomplete="off">
+      <div class="comment-composer publish-composer" id="publishComposer">
+        <div class="composer-drop-layer" aria-hidden="true">Drop image to upload</div>
+        <textarea id="publishBody" class="composer-input" rows="10" placeholder="Write your post…"></textarea>
+        <input class="composer-file" type="file" accept="image/*" multiple hidden>
+        <div class="composer-bar">
+          <button type="button" class="composer-attach" title="Attach image">Attach image</button>
+          <span class="composer-hint">Drop images to upload.</span>
+        </div>
+        <p class="composer-status" hidden></p>
+      </div>
+      <div class="publish-tags-head">
+        <span>Tags</span>
+        <span id="publishTagCount">0/10</span>
+      </div>
+      <div class="publish-tags" id="publishTagsWrap">
+        <div class="publish-tag-chips" id="publishTagChips"></div>
+        <input id="publishTagInput" type="text" maxlength="24" placeholder="Add a tag" autocomplete="off" spellcheck="false">
+      </div>
+      <p id="publishStatus" class="publish-status" hidden></p>
+      <div class="publish-actions">
+        <button type="button" class="btn-primary" id="publishSubmit">Publish</button>
+        <button type="button" class="btn-ghost" id="publishCancel">Cancel</button>
+      </div>
+      <section class="publish-preview-wrap" aria-live="polite">
+        <h2>Preview</h2>
+        <div class="publish-preview post-body" id="publishPreview"></div>
+      </section>
+    </div>
+  </div>
+
+  <div class="overlay" id="publishDiscard" hidden>
+    <div class="panel overlay-card login-card">
+      <h2 id="publishDiscardTitle">Discard post</h2>
+      <p id="publishDiscardLead">This unpublished post will be deleted.</p>
+      <div class="overlay-actions">
+        <button type="button" class="btn-primary" id="publishDiscardConfirm">Discard</button>
+        <button type="button" class="btn-ghost" id="publishDiscardKeep">Keep writing</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked@18/lib/marked.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/md.js"></script>
+  <script src="js/hive-auth.js"></script>
+  <script src="js/chain-queue.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

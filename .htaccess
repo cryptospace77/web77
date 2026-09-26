@@ -1,0 +1,29 @@
+# Crypto Space 77 — pretty Hive URLs
+# Works at the domain root and in a subdirectory (example.com/dir/@username).
+# /@username
+# /@username/permlink
+# /community/@username/permlink
+# /trending  /hot  /created  /tags  /welcome  /imprint
+# /trending/tag  /hot/tag  /created/tag
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # Infer the install directory so pretty URLs work at / and in a subdirectory.
+  RewriteCond %{REQUEST_URI}::$1 ^(/.+)/(.*)::\2$
+  RewriteRule ^(.*) - [E=BASE:%1]
+
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^ %{ENV:BASE}/index.html [QSA,L]
+</IfModule>
+
+<IfModule mod_dir.c>
+  DirectoryIndex index.html
+</IfModule>
+
+<IfModule mod_mime.c>
+  AddType text/javascript .js
+  AddType text/css .css
+  AddType image/svg+xml .svg
+</IfModule>
