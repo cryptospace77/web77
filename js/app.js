@@ -6098,7 +6098,7 @@
         ? "This account has not written comments yet."
         : page === "replies"
           ? "Nobody has replied to this account yet."
-          : "This account has no root posts yet.";
+          : "This account has no posts yet.";
     view.insertAdjacentHTML(
       "beforeend",
       `
