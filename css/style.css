@@ -1,8 +1,8 @@
 /* ─── Crypto Space 77 ─── */
 :root {
-  --bg: #07070e;
-  --bg-panel: rgba(12, 12, 22, 0.85);
-  --bg-input: #0e0e1a;
+  --bg: #070707;
+  --bg-panel: rgba(16, 16, 16, 0.85);
+  --bg-input: #101010;
   --bg-card: rgba(0, 0, 0, 0.35);
   --border: #2a1020;
   --border-hot: #e31337;
@@ -1596,7 +1596,6 @@ html.has-mouse .session-account:focus-within .session-account-menu {
   width: 100%;
   min-width: 0;
   padding: 1.7rem 1.55rem 1.45rem;
-  background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 12px;
   text-decoration: none;
