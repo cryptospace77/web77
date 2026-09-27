@@ -1,5 +1,5 @@
 /**
- * Crypto Space 77 — main javascript for router, feed, post, comments, and pages processing.
+ * Crypto Space 77 — main javascript for router, feed, post, comments, and page processing.
  */
 (function () {
   "use strict";
