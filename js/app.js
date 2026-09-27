@@ -3770,6 +3770,35 @@
 
     try {
       await promise;
+
+      // Wait for the post to actually exist on the blockchain
+      let postExists = false;
+      let retries = 0;
+      const maxRetries = 60; // ~60 seconds with 1 second intervals
+
+      while (!postExists && retries < maxRetries) {
+        try {
+          const post = await HiveApi.getContent(user, permlink);
+          if (post && post.author) {
+            postExists = true;
+            break;
+          }
+        } catch (err) {
+          // Post doesn't exist yet, continue retrying
+        }
+
+        if (!postExists) {
+          retries++;
+          // Wait 1 second before retrying
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+      if (!postExists) {
+        // Post never appeared - show error but don't navigate
+        setPublishStatus("Post was submitted but failed to appear on blockchain. Refresh the page to check.", true);
+        return;
+      }
+
       if (editing) {
         if (currentPost && currentPost.permlink === permlink && isOwnAuthor(currentPost.author)) {
           currentPost.title = title;
