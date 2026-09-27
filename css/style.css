@@ -2721,7 +2721,6 @@ button.tag-suggest:hover {
   padding: 0.9rem;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: rgba(8, 8, 16, 0.55);
 }
 
 .comment-composer.is-dragover {
