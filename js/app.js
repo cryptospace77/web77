@@ -5583,8 +5583,8 @@
     fill_transfer_from_savings: "unstake paid",
     claim_reward_balance: "claimed awards",
     delegate_vesting_shares: "delegation",
-    author_reward: "author award",
-    curation_reward: "curation award",
+    //author_reward: "author award",
+    //curation_reward: "curation award",
     comment_benefactor_reward: "benefactor award",
     interest: "hbd interest",
   };
@@ -5657,7 +5657,7 @@
     const wanted = 30;
     const out = [];
     let start = -1;
-    for (let i = 0; i < 8 && out.length < wanted; i++) {
+    for (let i = 0; i < 10 && out.length < wanted; i++) {
       const batch = await HiveApi.getAccountHistory(account, start, 100);
       if (!batch.length) break;
       for (let j = batch.length - 1; j >= 0; j--) {
