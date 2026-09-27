@@ -2515,6 +2515,7 @@ button.tag-suggest:hover {
   display: flex;
   align-items: center;
   gap: 1.5rem;
+  flex-wrap: wrap;
   margin-top: 2.25rem;
   padding: 1rem 0;
   border-top: 1px solid var(--border);
