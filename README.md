@@ -36,6 +36,6 @@ Then open 127.0.0.1:8777 in your web browser.
 
 **Alpha software:** CryptoSpace77 is currently under active alpha development. Features may change, bugs may occur, and things may break. **Use at your own risk.**
 
-## Hive blockchain
+## Hive
 
 Crypto Space 77 is powered by the [hive blockchain](https://hive.io/), a web3 fast & scalable ecosystem with zero fees, optimized for social media and dapps.
