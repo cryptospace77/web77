@@ -1,15 +1,14 @@
-# Crypto Space 77 — pretty Hive URLs
-# Works at the domain root and in a subdirectory (example.com/dir/@username).
+# Crypto Space 77 ─── dynamic url handling
 # /@username
 # /@username/permlink
-# /community/@username/permlink
+# /c/@username/permlink
 # /trending  /hot  /created  /tags  /welcome  /imprint
 # /trending/tag  /hot/tag  /created/tag
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
 
-  # Infer the install directory so pretty URLs work at / and in a subdirectory.
+  # Infer the install directory so dynamic URLs work at / and in a subdirectory (example.com/subdir/@username)
   RewriteCond %{REQUEST_URI}::$1 ^(/.+)/(.*)::\2$
   RewriteRule ^(.*) - [E=BASE:%1]
 
