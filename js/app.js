@@ -1880,69 +1880,6 @@
     c: true,
   };
 
-  function detectAppBase() {
-    if (HASH_ROUTING) {
-      const raw = window.__CS77_BASE__;
-      if (typeof raw === "string" && raw) return raw;
-      return location.href.split("#")[0].split("?")[0].replace(/[^/]*$/, "");
-    }
-    let given = window.__CS77_BASE__;
-    if (typeof given === "string" && given) {
-      if (/^[a-z]+:/i.test(given)) {
-        try {
-          given = new URL(given).pathname || "/";
-        } catch {
-          given = "/";
-        }
-      }
-      if (!given.startsWith("/")) given = "/" + given;
-      if (given !== "/" && !given.endsWith("/")) given += "/";
-      return given;
-    }
-    let path = location.pathname || "/";
-    try {
-      path = decodeURIComponent(path);
-    } catch {
-      /* keep raw */
-    }
-    const parts = path.split("/").filter(Boolean);
-    let i = 0;
-    for (; i < parts.length; i++) {
-      const seg = parts[i];
-      if (seg.charAt(0) === "@") break;
-      if (APP_ROUTE_HEADS[seg.toLowerCase()]) break;
-    }
-    return "/" + (i ? parts.slice(0, i).join("/") + "/" : "");
-  }
-
-  const APP_BASE = detectAppBase();
-  if (!HASH_ROUTING) window.__CS77_BASE__ = APP_BASE;
-
-  function appBasePrefix() {
-    if (!APP_BASE || APP_BASE === "/") return "";
-    return APP_BASE.replace(/\/+$/, "");
-  }
-
-  function stripAppBase(pathname) {
-    let path = pathname || "/";
-    const prefix = appBasePrefix();
-    if (!prefix) return path || "/";
-    if (path === prefix || path === prefix + "/") return "/";
-    if (path.indexOf(prefix + "/") === 0) {
-      path = path.slice(prefix.length) || "/";
-      return path.startsWith("/") ? path : "/" + path;
-    }
-    return path;
-  }
-
-  function prefixAppBase(path) {
-    let p = path || "/";
-    if (!p.startsWith("/")) p = "/" + p;
-    const prefix = appBasePrefix();
-    if (!prefix) return p;
-    return p === "/" ? prefix + "/" : prefix + p;
-  }
-
   function appHref(path) {
     let p = path || "/";
     if (p.startsWith("#")) {
@@ -1950,8 +1887,8 @@
       p = h ? (h.startsWith("/") ? h : "/" + h) : "/";
     }
     if (!p.startsWith("/")) p = "/" + p;
-    p = stripAppBase(p.split("#")[0].split("?")[0] || "/");
-    return HASH_ROUTING ? "#" + p : prefixAppBase(p);
+    p = p.split("#")[0].split("?")[0] || "/";
+    return HASH_ROUTING ? "#" + p : p;
   }
 
   function currentPath() {
@@ -1969,7 +1906,7 @@
     } catch {
       /* keep raw */
     }
-    return stripAppBase(path);
+    return path;
   }
 
   function hrefToPath(href) {
@@ -1979,7 +1916,7 @@
       return h ? (h.startsWith("/") ? h : "/" + h) : "/";
     }
     if (href.startsWith("/") && !href.startsWith("//")) {
-      return stripAppBase(href.split("#")[0].split("?")[0] || "/");
+      return href.split("#")[0].split("?")[0] || "/";
     }
     try {
       const u = new URL(href, location.href);
@@ -1988,7 +1925,7 @@
         return h.startsWith("/") ? h : "/" + h;
       }
       if (HASH_ROUTING) return "/";
-      return stripAppBase(u.pathname || "/");
+      return u.pathname || "/";
     } catch {
       return "/";
     }

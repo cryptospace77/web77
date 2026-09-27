@@ -4,45 +4,31 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script>
-    (function () {
-      var path = location.pathname || "/";
-      try {
-        path = decodeURIComponent(path);
-      } catch (e) {}
-      var parts = path.split("/").filter(Boolean);
-      var last = parts.length ? parts[parts.length - 1] : "";
-      var hash = location.protocol === "file:" || /index\.html$/i.test(last);
-      window.__CS77_HASH__ = hash;
-      var base;
-      if (hash) {
-        base = location.href.split("#")[0].split("?")[0].replace(/[^/]*$/, "");
-      } else {
-        var routes = {
-          feed: 1,
-          created: 1,
-          latest: 1,
-          trending: 1,
-          hot: 1,
-          tags: 1,
-          communities: 1,
-          publish: 1,
-          welcome: 1,
-          imprint: 1,
-          c: 1,
-        };
-        var i = 0;
-        for (; i < parts.length; i++) {
-          var seg = parts[i];
-          if (seg.charAt(0) === "@") break;
-          if (routes[String(seg).toLowerCase()]) break;
-        }
-        base = "/" + (i ? parts.slice(0, i).join("/") + "/" : "");
-      }
-      window.__CS77_BASE__ = base;
-      var el = document.createElement("base");
-      el.href = base;
-      document.head.insertBefore(el, document.head.firstChild);
-    })();
+    var path = location.pathname || "/";
+    try {
+      path = decodeURIComponent(path);
+    } catch (e) {}
+    var parts = path.split("/").filter(Boolean);
+    var last = parts.length ? parts[parts.length - 1] : "";
+    var routes = {
+      feed: 1,
+      created: 1,
+      latest: 1,
+      trending: 1,
+      hot: 1,
+      tags: 1,
+      communities: 1,
+      publish: 1,
+      welcome: 1,
+      imprint: 1,
+      c: 1,
+    };
+    var i = 0;
+    for (; i < parts.length; i++) {
+      var seg = parts[i];
+      if (seg.charAt(0) === "@") break;
+      if (routes[String(seg).toLowerCase()]) break;
+    }
   </script>
   <title>Crypto Space 77 — Decentralized Social Media</title>
   <meta name="description" content="Own your voice. Build, earn, and connect without censorship, gatekeepers, and algos.">
@@ -50,7 +36,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&family=Orbitron:wght@400;600;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
   <div class="bg-grid"></div>
@@ -283,10 +269,10 @@
 
   <script src="https://cdn.jsdelivr.net/npm/marked@18/lib/marked.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
-  <script src="js/api.js"></script>
-  <script src="js/md.js"></script>
-  <script src="js/hive-auth.js"></script>
-  <script src="js/chain-queue.js"></script>
-  <script src="js/app.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/md.js"></script>
+  <script src="/js/hive-auth.js"></script>
+  <script src="/js/chain-queue.js"></script>
+  <script src="/js/app.js"></script>
 </body>
 </html>

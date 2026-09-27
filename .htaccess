@@ -1,4 +1,5 @@
 # Crypto Space 77 ─── dynamic url handling
+# Install the app in the root directory for dynamic urls to work
 # /@username
 # /@username/permlink
 # /c/@username/permlink
@@ -7,14 +8,11 @@
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
-
-  # Infer the install directory so dynamic URLs work at / and in a subdirectory (example.com/subdir/@username)
-  RewriteCond %{REQUEST_URI}::$1 ^(/.+)/(.*)::\2$
-  RewriteRule ^(.*) - [E=BASE:%1]
+  RewriteBase /
 
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
-  RewriteRule ^ %{ENV:BASE}/index.html [QSA,L]
+  RewriteRule ^ /index.html [QSA,L]
 </IfModule>
 
 <IfModule mod_dir.c>
