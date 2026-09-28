@@ -7412,7 +7412,7 @@
       });
       publishOverlay.addEventListener("keydown", (e) => {
         if (e.target.id === "publishTagInput") {
-          if (e.key === "Enter" || e.key === "," || e.key === "Tab") {
+          if (e.key === " " || e.key === "Enter" || e.key === "," || e.key === "Tab") {
             if (e.key !== "Tab" || e.target.value.trim()) e.preventDefault();
             takeTagsFromInput();
             return;
