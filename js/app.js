@@ -5400,6 +5400,9 @@
   function profileBannerHtml(author, profile, hivePower) {
     const meta =
       (profile && (profile.metadata || profile.posting_json_metadata)) || {};
+      const profileImage = (meta?.profile?.profile_image || profile?.profile_image || "");
+      const avatarSrc = (profileImage?HiveMd.avatarUrl(author, "large")
+: "/assets/satoshi.png");
     const about = String(
       (meta.profile && meta.profile.about) || (profile && profile.about) || ""
     ).trim();
@@ -5423,7 +5426,7 @@
     return `
       <div class="profile-banner">
         <div class="profile-head">
-          <img class="avatar" src="${HiveMd.avatarUrl(author, "large")}" alt="">
+          <img class="avatar" src="${avatarSrc}" alt="">
           <div>
             <h1>${HiveMd.escapeHtml(display)}</h1>
             <p class="profile-handle"><a href="${href}">@${HiveMd.escapeHtml(author)}</a> · ${rep}</p>
