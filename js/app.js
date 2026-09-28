@@ -5269,7 +5269,7 @@
             ${tagsOf(root).map(tagChipHtml).join("")}
           </div>
           <div class="post-body">${HiveMd.renderMarkdown(root.body || "")}</div>
-          <div class="post-stats-bar">
+          <div class="post-stats-bar" id="stats">
             ${voteControlHtml(root, "pills")}
             ${payoutHtml(root, true)}
             ${postEdit}
