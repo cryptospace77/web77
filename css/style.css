@@ -278,9 +278,9 @@ html.has-mouse .logo-menu:hover .logo-dropdown {
   flex-direction: column;
 }
 
-html.has-mouse .logo-wrap:hover .brand h1,
-.logo-wrap.is-open .brand h1,
-#logoBrand:active h1 {
+html.has-mouse .logo-wrap:hover .brand ,
+.logo-wrap.is-open .brand ,
+#logoBrand:active  {
   color: var(--red-bright);
   text-shadow:
     0 0 6px #ff2a4d,
@@ -2386,12 +2386,12 @@ button.tag-suggest:hover {
   line-height: 1.2;
 }
 
-.post-body h1 { font-size: 2rem; }
-.post-body h2 { font-size: 1.65rem; }
-.post-body h3 { font-size: 1.35rem; }
-.post-body h4 { font-size: 1.2rem; }
-.post-body h5 { font-size: 1.1rem; }
-.post-body h6 { font-size: 1rem; }
+.post-body h1 { font-size: 2.2rem; }
+.post-body h2 { font-size: 2rem; }
+.post-body h3 { font-size: 1.8rem; }
+.post-body h4 { font-size: 1.6rem; }
+.post-body h5 { font-size: 1.4rem; }
+.post-body h6 { font-size: 1.2rem; }
 
 .post-body p,
 .post-body ul,
