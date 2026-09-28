@@ -1261,15 +1261,21 @@ html.has-mouse .session-account:focus-within .session-account-menu {
 .vote-btn.stat-pill,
 .downvote-btn.stat-pill,
 .vote-count-btn.stat-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin: 0;
-  min-width: 2.2rem;
-  min-height: 2.45rem;
-  padding: 0.45rem 0.9rem;
+  min-width: 2.45rem;
+  height: 2.45rem;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: transparent;
   font-size: 1.05rem;
   transition: color 0.15s, text-shadow 0.15s, background 0.15s, box-shadow 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+.vote-count-btn.stat-pill {
+  padding: 0.45rem 0.9rem;
 }
 
 .vote-btn.is-confirming,
