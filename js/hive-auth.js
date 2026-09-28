@@ -9,7 +9,7 @@
   const DB_VERSION = 1;
   const STORE = "keys";
   const RECORD_ID = "posting";
-  const HIVE_TX_URL = "https://cdn.jsdelivr.net/npm/hive-tx@7.2.1/dist/index.mjs";
+  const HIVE_TX_URL = "https://cdn.jsdelivr.net/npm/hive-tx@7.2/dist/index.mjs";
 
   let sessionBytes = null;
   let sessionUser = "";
