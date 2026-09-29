@@ -278,7 +278,7 @@ html.has-mouse .logo-menu:hover .logo-dropdown {
   flex-direction: column;
 }
 
-html.has-mouse .logo-wrap:hover .brand ,
+html.has-mouse .logo-wrap:hover .brand h1,
 .logo-wrap.is-open .brand ,
 #logoBrand:active  {
   color: var(--red-bright);
