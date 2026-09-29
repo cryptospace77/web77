@@ -6776,16 +6776,9 @@
     return false;
   }
 
-  function syncWelcomeHeaderHeight() {
-    const header = $(".header");
-    if (!header) return;
-    document.documentElement.style.setProperty("--header-h", header.offsetHeight + "px");
-  }
-
   function applyWelcome(show) {
     const flyer = $("#welcomeFlyer");
     const was = document.body.classList.contains("has-welcome");
-    if (show) syncWelcomeHeaderHeight();
     document.body.classList.toggle("has-welcome", show);
     if (flyer) flyer.hidden = !show;
     if (was && !show) window.scrollTo(0, 0);
@@ -6801,22 +6794,6 @@
   function bindWelcome() {
     const btn = $("#welcomeDown");
     if (btn) btn.addEventListener("click", scrollToFeed);
-    const header = $(".header");
-    if (header && typeof ResizeObserver === "function") {
-      const headerObserver = new ResizeObserver(() => {
-        if (document.body.classList.contains("has-welcome")) syncWelcomeHeaderHeight();
-      });
-      headerObserver.observe(header);
-    } else {
-      window.addEventListener("resize", () => {
-        if (document.body.classList.contains("has-welcome")) syncWelcomeHeaderHeight();
-      });
-    }
-    if (document.fonts && document.fonts.ready) {
-      document.fonts.ready.then(() => {
-        if (document.body.classList.contains("has-welcome")) syncWelcomeHeaderHeight();
-      });
-    }
   }
 
   async function route() {

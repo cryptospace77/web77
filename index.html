@@ -43,76 +43,78 @@
   <div class="bg-hex bg-hex-br" aria-hidden="true"></div>
   <div class="scanlines"></div>
 
-  <header class="header">
-    <div class="logo-wrap" id="logoWrap">
-      <div class="logo-menu" id="logoMenu">
-        <button type="button" class="logo-trigger" id="logoTrigger" aria-haspopup="true" aria-expanded="false" aria-controls="logoDropdown" aria-label="Open feed, tags, and communities">
-          <svg class="app-logo" width="60" height="60" viewBox="0 0 128 128" role="img" aria-label="Crypto Space 77 hexagonal logo">
-            <polygon
-              points="108,64 86,102.11 42,102.11 20,64 42,25.89 86,25.89"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="5.5"
-              stroke-linejoin="miter"
-            />
-          </svg>
-        </button>
-        <div class="logo-dropdown" id="logoDropdown">
-          <nav class="logo-dropdown-panel" aria-label="Feed, tags, and communities">
-            <a class="logo-dropdown-link" id="logoProfileLink" href="#" hidden>Profile</a>
-            <a class="logo-dropdown-link" id="logoWalletLink" href="#" hidden>Wallet</a>
-            <a class="logo-dropdown-link" id="logoWelcomeLink" href="/welcome">Welcome</a>
-            <a class="logo-dropdown-link" id="logoFeedLink" href="/feed">Feed</a>
-            <a class="logo-dropdown-link" id="logoTagsLink" href="/tags">Tags</a>
-            <a class="logo-dropdown-link" id="logoCommunitiesLink" href="/communities">Communities</a>
-            <div class="logo-dropdown-favs" id="logoFavTags" hidden></div>
-            <div class="logo-dropdown-favs" id="logoFavCommunities" hidden></div>
-            <div class="node-menu node-menu-in-menu">
-              <button type="button" class="status-pill" aria-haspopup="listbox" aria-expanded="false" aria-label="Switch Hive node">
-                <span class="dot"></span>
-                <span class="node-label">api.hive.blog</span>
-              </button>
-              <div class="node-dropdown">
-                <div class="node-dropdown-panel" role="listbox" aria-label="Hive API nodes"></div>
+  <div class="welcome-hero">
+    <header class="header">
+      <div class="logo-wrap" id="logoWrap">
+        <div class="logo-menu" id="logoMenu">
+          <button type="button" class="logo-trigger" id="logoTrigger" aria-haspopup="true" aria-expanded="false" aria-controls="logoDropdown" aria-label="Open feed, tags, and communities">
+            <svg class="app-logo" width="60" height="60" viewBox="0 0 128 128" role="img" aria-label="Crypto Space 77 hexagonal logo">
+              <polygon
+                points="108,64 86,102.11 42,102.11 20,64 42,25.89 86,25.89"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="5.5"
+                stroke-linejoin="miter"
+              />
+            </svg>
+          </button>
+          <div class="logo-dropdown" id="logoDropdown">
+            <nav class="logo-dropdown-panel" aria-label="Feed, tags, and communities">
+              <a class="logo-dropdown-link" id="logoProfileLink" href="#" hidden>Profile</a>
+              <a class="logo-dropdown-link" id="logoWalletLink" href="#" hidden>Wallet</a>
+              <a class="logo-dropdown-link" id="logoWelcomeLink" href="/welcome">Welcome</a>
+              <a class="logo-dropdown-link" id="logoFeedLink" href="/feed">Feed</a>
+              <a class="logo-dropdown-link" id="logoTagsLink" href="/tags">Tags</a>
+              <a class="logo-dropdown-link" id="logoCommunitiesLink" href="/communities">Communities</a>
+              <div class="logo-dropdown-favs" id="logoFavTags" hidden></div>
+              <div class="logo-dropdown-favs" id="logoFavCommunities" hidden></div>
+              <div class="node-menu node-menu-in-menu">
+                <button type="button" class="status-pill" aria-haspopup="listbox" aria-expanded="false" aria-label="Switch Hive node">
+                  <span class="dot"></span>
+                  <span class="node-label">api.hive.blog</span>
+                </button>
+                <div class="node-dropdown">
+                  <div class="node-dropdown-panel" role="listbox" aria-label="Hive API nodes"></div>
+                </div>
               </div>
-            </div>
-          </nav>
+            </nav>
+          </div>
         </div>
+        <div class="logo-brand" id="logoBrand"><a class="brand" href="/" title="Crypto Space 77"><h1>Crypto Space<span class="brand-77">77</span></h1></a></div>
       </div>
-      <div class="logo-brand" id="logoBrand"><a class="brand" href="/" title="Crypto Space 77"><h1>Crypto Space<span class="brand-77">77</span></h1></a></div>
-    </div>
-    <div class="header-right">
-      <div class="node-menu">
-        <button type="button" class="status-pill" aria-haspopup="listbox" aria-expanded="false" aria-label="Switch Hive node">
-          <span class="dot"></span>
-          <span id="nodeLabel" class="node-label">api.hive.blog</span>
-        </button>
-        <div class="node-dropdown">
-          <div class="node-dropdown-panel" role="listbox" aria-label="Hive API nodes"></div>
+      <div class="header-right">
+        <div class="node-menu">
+          <button type="button" class="status-pill" aria-haspopup="listbox" aria-expanded="false" aria-label="Switch Hive node">
+            <span class="dot"></span>
+            <span id="nodeLabel" class="node-label">api.hive.blog</span>
+          </button>
+          <div class="node-dropdown">
+            <div class="node-dropdown-panel" role="listbox" aria-label="Hive API nodes"></div>
+          </div>
         </div>
+        <div id="queueSlot" class="queue-slot" hidden></div>
+        <div id="sessionSlot"></div>
       </div>
-      <div id="queueSlot" class="queue-slot" hidden></div>
-      <div id="sessionSlot"></div>
-    </div>
-  </header>
+    </header>
 
-  <section class="welcome-flyer" id="welcomeFlyer" hidden aria-labelledby="welcomeTitle">
-    <h2 class="welcome-title" id="welcomeTitle">Decentralized Social Media</h2>
-    <p class="welcome-lead">Own your voice. Build, earn, and connect without censorship, gatekeepers, and algos.</p>
-    <a class="btn-primary welcome-join" href="https://hivedapps.com/" target="_blank" rel="noopener noreferrer">Join</a>
-    <button type="button" class="welcome-down" id="welcomeDown" aria-label="Scroll to the feed">
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          d="M6 9l6 6 6-6"
-        />
-      </svg>
-    </button>
-  </section>
+    <section class="welcome-flyer" id="welcomeFlyer" hidden aria-labelledby="welcomeTitle">
+      <h2 class="welcome-title" id="welcomeTitle">Decentralized Social Media</h2>
+      <p class="welcome-lead">Own your voice. Build, earn, and connect without censorship, gatekeepers, and algos.</p>
+      <a class="btn-primary welcome-join" href="https://hivedapps.com/" target="_blank" rel="noopener noreferrer">Join</a>
+      <button type="button" class="welcome-down" id="welcomeDown" aria-label="Scroll to the feed">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M6 9l6 6 6-6"
+          />
+        </svg>
+      </button>
+    </section>
+  </div>
 
   <div class="app">
     <div class="error-banner" id="errorBanner" hidden>

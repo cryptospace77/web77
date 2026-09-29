@@ -4216,12 +4216,22 @@ a.publish-fab:hover {
 }
 
 /* Welcome flyer */
-body.has-welcome .header {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+body.has-welcome .welcome-hero {
+display: flex;
+flex-direction: column;
+width: 100%;
+min-height: 100vh;
+min-height: 100dvh;
+}
+
+body.has-welcome .welcome-hero .header {
+flex: 0 0 auto;
   border-bottom-color: transparent;
+}
+
+body.has-welcome .welcome-hero .welcome-flyer {
+flex: 1 0 auto;
+min-height: 0;
 }
 
 .welcome-flyer {
@@ -4233,10 +4243,7 @@ body.has-welcome .header {
   justify-content: center;
   text-align: center;
   box-sizing: border-box;
-  width: 100%;
-  min-height: 100vh;
-  min-height: 100dvh;
-  padding: calc(var(--header-h, 5.5rem) + 1.25rem) 1.5rem 5.5rem;
+  padding: 1.25rem 1.5rem 5.5rem;
 }
 
 .welcome-title {
