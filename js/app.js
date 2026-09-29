@@ -1775,9 +1775,7 @@
 
   function passesFeedFilter(post) {
     const rep = HiveMd.displayReputation(post.author_reputation);
-    const votes = voteCount(post);
-    const comments = Number(post.children || 0);
-    return rep > 50 || votes > 100 || comments > 10;
+    return rep > 20;
   }
 
   function isRootPost(post) {
