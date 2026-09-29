@@ -3713,11 +3713,18 @@ a.publish-fab:hover {
   padding: 1rem;
 }
 
-.publish-preview h1 {
+.publish-preview h1,
+.publish-preview h2,
+.publish-preview h3,
+.publish-preview h4,
+.publish-preview h5,
+.publish-preview h6
+ {
   font-family: var(--font-serif);
   font-weight: 400;
   font-size: clamp(1.7rem, 4vw, 2.3rem);
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--yellow);
   margin: 0 0 1.1rem;
 }
