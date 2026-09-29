@@ -2386,7 +2386,7 @@ button.tag-suggest:hover {
   line-height: 1.2;
 }
 
-.post-body h1 { font-size: 2.2rem; }
+.post-body h1 { font-size: 2rem; }
 .post-body h2 { font-size: 2rem; }
 .post-body h3 { font-size: 1.8rem; }
 .post-body h4 { font-size: 1.6rem; }
@@ -3723,7 +3723,7 @@ a.publish-fab:hover {
   font-family: var(--font-serif);
   font-weight: 400;
   font-size: clamp(1.7rem, 4vw, 2.3rem);
-  letter-spacing: 0;
+  letter-spacing: -0.02em;
   text-transform: none;
   color: var(--yellow);
   margin: 0 0 1.1rem;
