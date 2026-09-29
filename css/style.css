@@ -3831,9 +3831,14 @@ a.publish-fab:hover {
   color: var(--yellow-dim);
 }
 
-.btn-social-yellow:hover {
+.btn-social-yellow:hover,
+.btn-social-gray:hover {
   color: var(--yellow);
   text-shadow: 0 0 10px rgba(255, 225, 74, 0.35);
+}
+
+.btn-social-gray {
+  color: var(--gray);
 }
 
 .footer-meta {
