@@ -7372,6 +7372,10 @@
       bindComposerMedia(publishOverlay);
       publishOverlay.addEventListener("click", (e) => {
         if (e.target === publishOverlay) {
+          const active = document.activeElement;
+          if (active && publishOverlay.contains(active)) {
+            return;
+          }
           closePublish();
           return;
         }
