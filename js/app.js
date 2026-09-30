@@ -421,7 +421,12 @@
     }
     if (nodeOverlay) {
       nodeOverlay.addEventListener("click", (e) => {
-        if (e.target === nodeOverlay) closeNodeOverlay();
+        if (e.target === nodeOverlay) {
+          const active = document.activeElement;
+          if (!active || !nodeOverlay.contains(active)) {
+            closeNodeOverlay();
+          }
+        }
       });
     }
   }
@@ -7544,7 +7549,12 @@
       });
     }
     overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) closeLogin();
+      if (e.target === overlay) {
+        const active = document.activeElement;
+        if (!active || !overlay.contains(active)) {
+          closeLogin();
+        }
+      }
     });
 
     const walletOverlay = $("#walletOverlay");
