@@ -142,16 +142,16 @@ a:hover {
   margin-right: auto;
 }
 
-body.is-profile .app,
-body.is-profile #view {
+.is-profile .app,
+.is-profile #view {
   max-width: none;
 }
 
-body.is-profile .app {
+.is-profile .app {
   padding-top: 0;
 }
 
-body.is-profile .feed {
+.is-profile .feed {
   max-width: 600px;
   margin-left: auto;
   margin-right: auto;
@@ -2973,14 +2973,14 @@ button.tag-suggest:hover {
   z-index: 2;
 }
 
-body.is-profile .feed-nav,
-body.is-profile .wallet-page,
-body.is-profile .feed-actions,
-body.is-profile .loading-row,
-body.is-community .feed-nav,
-body.is-community .community-panel,
-body.is-community .feed-actions,
-body.is-community .loading-row {
+.is-profile .feed-nav,
+.is-profile .wallet-page,
+.is-profile .feed-actions,
+.is-profile .loading-row,
+.is-community .feed-nav,
+.is-community .community-panel,
+.is-community .feed-actions,
+.is-community .loading-row {
   max-width: 600px;
   margin-left: auto;
   margin-right: auto;
@@ -4249,23 +4249,23 @@ a.publish-fab:hover {
 }
 
 /* Welcome flyer */
-body.has-welcome .hero {
+.has-welcome .hero {
 min-height: 100lvh;
 }
 
-body.has-welcome .hero-inner {
+.has-welcome .hero-inner {
 display: flex;
 flex-direction: column;
 width: 100%;
 min-height: 100dvh;
 }
 
-body.has-welcome .header {
+.has-welcome .header {
 flex: 0 0 auto;
   border-bottom-color: transparent;
 }
 
-body.has-welcome .welcome-flyer {
+.has-welcome .welcome-flyer {
 flex: 1 0 auto;
 min-height: 0;
 }
@@ -4357,12 +4357,12 @@ min-height: 0;
   }
 }
 
-body.has-welcome #view {
+.has-welcome #view {
   min-height: 100vh;
   min-height: 100dvh;
 }
 
-body.has-welcome #view .feed-nav {
+.has-welcome #view .feed-nav {
   scroll-margin-top: 1.25rem;
 }
 
