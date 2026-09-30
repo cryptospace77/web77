@@ -4249,20 +4249,23 @@ a.publish-fab:hover {
 }
 
 /* Welcome flyer */
-body.has-welcome .welcome-hero {
+body.has-welcome .hero {
+min-height: 100lvh;
+}
+
+body.has-welcome .hero-inner {
 display: flex;
 flex-direction: column;
 width: 100%;
-min-height: 100vh;
 min-height: 100dvh;
 }
 
-body.has-welcome .welcome-hero .header {
+body.has-welcome .header {
 flex: 0 0 auto;
   border-bottom-color: transparent;
 }
 
-body.has-welcome .welcome-hero .welcome-flyer {
+body.has-welcome .welcome-flyer {
 flex: 1 0 auto;
 min-height: 0;
 }
