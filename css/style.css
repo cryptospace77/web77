@@ -143,53 +143,29 @@ a:hover {
 }
 
 .post-layer {
-  position: fixed;
-  z-index: 30;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  background: var(--bg);
-  -webkit-overflow-scrolling: touch;
+  position: relative;
+  z-index: 1;
+  flex: 1 0 auto;
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 2rem 1.75rem 3rem;
+  min-width: 0;
+  min-height: calc(100dvh - 20rem);
+  overflow-x: clip;
 }
 
 .post-layer-inner {
   width: 100%;
   max-width: 600px;
   margin: 0 auto;
-  padding: 2rem 1.75rem 3rem;
+  padding: 0;
   min-width: 0;
 }
 
-.post-back-bar {
-  position: sticky;
-  top: 0;
-  z-index: 4;
-  margin: 0 0 1.1rem;
-  padding: 0.2rem 0 0.55rem;
-  background: var(--bg);
-}
-
-.post-back-bar .back-link {
-  margin-bottom: 0;
-}
-
-button.back-link {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  padding: 0;
-  cursor: pointer;
-  font: inherit;
-  color: var(--gray);
-}
-
 body.is-post-open .app,
-body.is-post-open .footer,
 body.is-post-open .welcome-flyer {
-  pointer-events: none;
+  display: none !important;
 }
 
 .is-profile .app,
@@ -2040,19 +2016,6 @@ a.community:hover {
   max-width: var(--measure);
   margin: 0 auto;
   padding: 0.5rem 0 1rem;
-}
-
-.back-link {
-  display: inline-block;
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
-  color: var(--gray);
-  margin-bottom: 1.75rem;
-}
-
-.back-link:hover {
-  color: var(--yellow);
 }
 
 .article-community {
@@ -4007,11 +3970,8 @@ a.publish-fab:hover {
     opacity: 0.22;
   }
 
-  .app {
-    padding: 1.5rem 1.1rem 2.5rem;
-  }
-
-  .post-layer-inner {
+  .app,
+  .post-layer {
     padding: 1.5rem 1.1rem 2.5rem;
   }
 

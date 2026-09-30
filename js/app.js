@@ -62,6 +62,7 @@
   let publishSubs = [];
   let publishSubsUser = "";
   let lastNonPublishPath = "/";
+  let publishNavPushed = false;
   let currentViewKey = "";
   let welcomeHold = false;
   let currentPost = null;
@@ -71,8 +72,8 @@
     permlink: "",
     gen: 0,
     scrollY: 0,
-    locked: false,
-    padRight: "",
+    heldScroll: false,
+    hadWelcome: false,
   };
   const postSnaps = new Map();
   const POST_SNAP_MAX = 6;
@@ -1963,21 +1964,9 @@
     const chosen = behavior || (reduce.matches ? "auto" : "smooth");
     const layer = document.getElementById("postLayer");
     if (layer && postLayer.open && layer.contains(el)) {
-      const bar = layer.querySelector(".post-back-bar");
-      const barH = bar ? bar.getBoundingClientRect().height : 0;
-      // Read geometry after the layer is shown so a just-opened post has a
-      // real scroll height. Assigning scrollTop avoids a smooth animation
-      // that can be dropped when the layer was hidden a moment ago.
-      void layer.offsetHeight;
-      const top = Math.max(
-        0,
-        layer.scrollTop +
-          (el.getBoundingClientRect().top - layer.getBoundingClientRect().top) -
-          barH -
-          8
-      );
-      if (chosen === "auto") layer.scrollTop = top;
-      else layer.scrollTo({ top, behavior: chosen });
+      const top = Math.max(0, window.scrollY + el.getBoundingClientRect().top - 8);
+      if (chosen === "auto") scrollWindowInstant(top);
+      else window.scrollTo({ top, left: 0, behavior: chosen });
       return true;
     }
     el.scrollIntoView({ behavior: chosen, block: "start" });
@@ -2502,7 +2491,31 @@
     const url = appHref(path) + hashFragment(href);
     if (replace) history.replaceState(null, "", url);
     else history.pushState(null, "", url);
+    publishNavPushed = parseRoute(path).name === "publish" && !replace;
     route();
+  }
+
+  function commentsAreShowing() {
+    const el = document.getElementById("comments");
+    if (!el || el.closest("[hidden]")) return false;
+    const layer = document.getElementById("postLayer");
+    if (layer && layer.contains(el)) return !layer.hidden;
+    return true;
+  }
+
+  function commentLinkStaysOnPage(href) {
+    if (!href) return false;
+    if (href === "#comments") return true;
+    try {
+      const u = new URL(href, location.href);
+      return (
+        u.pathname === location.pathname &&
+        u.search === location.search &&
+        (u.hash === "#comments" || /#comments$/.test(u.hash))
+      );
+    } catch {
+      return false;
+    }
   }
 
   function isInternalHref(href) {
@@ -2543,7 +2556,10 @@
     }
     const toComments =
       a.classList.contains("comment-count-link") || href === "#comments" || /#comments$/.test(href);
-    if (toComments && document.getElementById("comments")) {
+    // A feed card's comment count points at the post. Only an in-page
+    // #comments link should scroll, and only while that section is visible.
+    // A previously opened post leaves #comments in the hidden layer.
+    if (toComments && commentsAreShowing() && commentLinkStaysOnPage(href)) {
       e.preventDefault();
       pendingCommentsScroll = false;
       scrollToComments();
@@ -4038,6 +4054,13 @@
   function closePublish(opts) {
     hidePublishOverlay(opts);
     if (parseRoute().name !== "publish") return;
+    // Publish was pushed on top of the open page. Pop that entry so a post
+    // opened from the feed stays open, instead of replacing it with the feed.
+    if (publishNavPushed) {
+      publishNavPushed = false;
+      history.back();
+      return;
+    }
     let back = lastNonPublishPath || "/";
     if (parseRoute(back).name === "publish") back = "/";
     navigate(appHref(back.startsWith("/") ? back : "/" + back), true);
@@ -5697,17 +5720,6 @@
     return null;
   }
 
-  function postCanGoBack() {
-    if (currentViewKey) return true;
-    const state = history.state;
-    return Boolean(state && state.cs77 === "post" && state.underKey);
-  }
-
-  function postBackHtml() {
-    if (!postCanGoBack()) return "";
-    return `<div class="post-back-bar"><button type="button" class="back-link post-back">Back</button></div>`;
-  }
-
   function commentsPendingHtml() {
     return `<div class="loading-row post-comments-pending"><span class="btn-loader" aria-hidden="true"></span> Loading comments…</div>`;
   }
@@ -5740,7 +5752,6 @@
       options.commentsHtml != null ? options.commentsHtml : commentsPendingHtml();
     return `
       <article class="article">
-        ${options.back === false ? "" : postBackHtml()}
         ${community}
         <h1>${HiveMd.escapeHtml(root.title || "(untitled)")}</h1>
         <div class="article-byline">
@@ -5780,7 +5791,7 @@
   function paintPostMessage(html) {
     const pv = postViewEl();
     if (!pv) return;
-    pv.innerHTML = postBackHtml() + html;
+    pv.innerHTML = html;
   }
 
   function setPostTitle(root) {
@@ -5885,7 +5896,6 @@
   function rememberPostSnap() {
     if (!postLayer.author || !postLayer.permlink) return;
     const pv = postViewEl();
-    const layer = postLayerEl();
     if (!pv || !pv.innerHTML.trim()) return;
     const html = pv.innerHTML;
     const key = snapKey(postLayer.author, postLayer.permlink);
@@ -5895,7 +5905,7 @@
     postSnaps.delete(key);
     postSnaps.set(key, {
       html,
-      scroll: layer ? layer.scrollTop : 0,
+      scroll: window.scrollY || window.pageYOffset || 0,
       title: document.title,
       root: currentPost,
     });
@@ -5917,64 +5927,40 @@
     return true;
   }
 
-  function placePostLayer() {
-    const layer = postLayerEl();
-    if (!layer || layer.hidden) return;
-    const header = document.querySelector(".header");
-    let top = 0;
-    if (header) {
-      const bottom = header.getBoundingClientRect().bottom;
-      if (bottom > 0) top = Math.round(bottom);
-    }
-    layer.style.top = top + "px";
-  }
+  let instantScrollGen = 0;
 
-  function lockPageScroll() {
-    if (postLayer.locked) return;
-    const y = postLayer.scrollY || 0;
-    postLayer.locked = true;
-    const body = document.body;
-    const gap = Math.max(0, window.innerWidth - document.documentElement.clientWidth);
-    postLayer.padRight = body.style.paddingRight || "";
-    body.classList.add("is-post-open");
-    body.style.position = "fixed";
-    body.style.top = y ? "-" + y + "px" : "0";
-    body.style.left = "0";
-    body.style.right = "0";
-    body.style.width = "100%";
-    if (gap) body.style.paddingRight = gap + "px";
+  function armInstantScroll() {
+    const root = document.documentElement;
+    const gen = ++instantScrollGen;
+    // html { scroll-behavior: smooth } would ease the jump to the top of a
+    // post, and putting smooth back in the same turn starts that animation.
+    root.style.scrollBehavior = "auto";
+    root.style.overflowAnchor = "none";
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (gen !== instantScrollGen) return;
+        root.style.scrollBehavior = "";
+        root.style.overflowAnchor = "";
+      });
+    });
   }
 
   function scrollWindowInstant(y) {
+    armInstantScroll();
     const root = document.documentElement;
-    const prev = root.style.scrollBehavior;
-    root.style.scrollBehavior = "auto";
-    window.scrollTo(0, y);
-    root.style.scrollBehavior = prev;
-  }
-
-  function unlockPageScroll(restore) {
-    if (!postLayer.locked) return;
-    const y = restore ? postLayer.scrollY || 0 : 0;
-    postLayer.locked = false;
-    const body = document.body;
-    body.classList.remove("is-post-open");
-    body.style.position = "";
-    body.style.top = "";
-    body.style.left = "";
-    body.style.right = "";
-    body.style.width = "";
-    body.style.paddingRight = postLayer.padRight || "";
-    // html { scroll-behavior: smooth } would animate this jump and the feed
-    // would visibly travel. An inline auto override settles it in one step.
-    scrollWindowInstant(y);
+    const top = y || 0;
+    try {
+      window.scrollTo({ top, left: 0, behavior: "instant" });
+    } catch (err) {
+      window.scrollTo(0, top);
+    }
+    root.scrollTop = top;
   }
 
   function setPostBackgroundHidden(hidden) {
     const app = document.querySelector(".app");
-    const footer = document.querySelector(".footer");
     const flyer = document.getElementById("welcomeFlyer");
-    [app, footer, flyer].forEach((el) => {
+    [app, flyer].forEach((el) => {
       if (!el) return;
       if (hidden) el.setAttribute("aria-hidden", "true");
       else el.removeAttribute("aria-hidden");
@@ -5983,29 +5969,52 @@
 
   function ensurePostHistory() {
     const state = history.state;
-    if (!postLayer.locked) {
+    // Capture the feed offset once, before the feed is taken out of flow.
+    // Later post-to-post opens keep that offset for Back.
+    if (!postLayer.heldScroll) {
       if (state && state.cs77 === "post" && Number.isFinite(Number(state.underScroll))) {
         postLayer.scrollY = Number(state.underScroll);
       } else {
         postLayer.scrollY = window.scrollY || window.pageYOffset || 0;
       }
+      if (state && state.cs77 === "post" && typeof state.underWelcome === "boolean") {
+        postLayer.hadWelcome = state.underWelcome;
+      } else {
+        postLayer.hadWelcome = document.body.classList.contains("has-welcome");
+      }
+      postLayer.heldScroll = true;
     }
     const underKey =
       (state && state.cs77 === "post" && state.underKey) || currentViewKey || "";
     history.replaceState(
-      { cs77: "post", underScroll: postLayer.scrollY || 0, underKey },
+      {
+        cs77: "post",
+        underScroll: postLayer.scrollY || 0,
+        underKey,
+        underWelcome: !!postLayer.hadWelcome,
+      },
       "",
       location.href
     );
+  }
+
+  function closeWelcomeForPost() {
+    if (!postLayer.hadWelcome) return;
+    document.body.classList.remove("has-welcome");
+    const flyer = document.getElementById("welcomeFlyer");
+    if (flyer) flyer.hidden = true;
   }
 
   function revealPostLayer() {
     const layer = postLayerEl();
     if (!layer) return null;
     ensurePostHistory();
-    lockPageScroll();
+    armInstantScroll();
+    closeWelcomeForPost();
+    const active = document.activeElement;
+    if (active && active !== document.body && active.blur) active.blur();
+    document.body.classList.add("is-post-open");
     layer.hidden = false;
-    placePostLayer();
     setPostBackgroundHidden(true);
     postLayer.open = true;
     updateScrollTopBtn();
@@ -6022,8 +6031,20 @@
     postLayer.open = false;
     postLayer.author = "";
     postLayer.permlink = "";
+    const y = postLayer.scrollY || 0;
+    const restore = !(opts && opts.restoreScroll === false);
+    const bringWelcome = restore && postLayer.hadWelcome;
+    postLayer.heldScroll = false;
+    postLayer.hadWelcome = false;
+    armInstantScroll();
+    document.body.classList.remove("is-post-open");
     setPostBackgroundHidden(false);
-    unlockPageScroll(!(opts && opts.restoreScroll === false));
+    if (bringWelcome) {
+      document.body.classList.add("has-welcome");
+      const flyer = document.getElementById("welcomeFlyer");
+      if (flyer) flyer.hidden = false;
+    }
+    scrollWindowInstant(restore ? y : 0);
     updateScrollTopBtn();
   }
 
@@ -6062,8 +6083,8 @@
       ignore = true;
       stopCommentJump();
     };
-    layer.addEventListener("wheel", onUser, { passive: true });
-    layer.addEventListener("touchstart", onUser, { passive: true });
+    window.addEventListener("wheel", onUser, { passive: true });
+    window.addEventListener("touchstart", onUser, { passive: true });
     const realign = () => {
       if (ignore || !postLayer.open || postLayer.gen !== gen) return;
       scrollToComments("auto");
@@ -6072,8 +6093,8 @@
     observer.observe(article);
     postLayer.jumpObserver = observer;
     postLayer.jumpCleanup = () => {
-      layer.removeEventListener("wheel", onUser);
-      layer.removeEventListener("touchstart", onUser);
+      window.removeEventListener("wheel", onUser);
+      window.removeEventListener("touchstart", onUser);
     };
     postLayer.jumpTimer = setTimeout(stopCommentJump, 4000);
     article.querySelectorAll("img").forEach((img) => {
@@ -6085,8 +6106,8 @@
     if (!opts || !postLayer.open) return;
     if (opts.jumpComments) {
       // The post can grow after the first paint (images, then the thread).
-      // Keep the comments section under the back bar until that settles,
-      // unless the reader has already scrolled away.
+      // Keep the comments section in view until that settles, unless the
+      // reader has already scrolled away.
       scrollToComments("auto");
       armCommentJump();
       return;
@@ -6108,6 +6129,7 @@
     }
 
     if (postLayer.open && postLayer.author === a && postLayer.permlink === p && pv.innerHTML.trim()) {
+      if (currentPost) setPostTitle(currentPost);
       settlePostAnchor(options, !htmlHasPendingComments(pv.innerHTML));
       return;
     }
@@ -6139,8 +6161,7 @@
     }
 
     revealPostLayer();
-    const scroller = postLayerEl();
-    if (scroller) scroller.scrollTop = restoreScroll != null ? restoreScroll : 0;
+    scrollWindowInstant(restoreScroll != null ? restoreScroll : 0);
     const shown = postViewEl();
     const articleShown = Boolean(shown && shown.querySelector("article.article"));
     // "Opening post…" has no article yet. A cached card does, with a pending
@@ -7727,6 +7748,7 @@
     clearError();
     const r = parseRoute();
     if (r.name === "post") {
+      publishNavPushed = false;
       const jumpComments =
         pendingCommentsScroll || (!HASH_ROUTING && location.hash === "#comments");
       const anchor =
@@ -7750,10 +7772,13 @@
     }
     const key = routeKey(r);
     const sameView = Boolean(key && key === currentViewKey && view.innerHTML.trim());
-    if (postLayer.open) {
-      suspendPostLayer({ restoreScroll: sameView || r.name === "publish" });
+    // A post opened from the feed stays up under the publish dialog. Closing
+    // the dialog returns to that post instead of the feed underneath.
+    const keepPost = r.name === "publish" && postLayer.open;
+    if (postLayer.open && !keepPost) {
+      suspendPostLayer({ restoreScroll: sameView });
     }
-    currentPost = null;
+    if (!keepPost) currentPost = null;
     if (r.name !== "community") resetCommunityState();
     if (r.name !== "profile") resetProfileState();
     if (r.name !== "publish") {
@@ -7765,9 +7790,13 @@
     }
     pendingCommentsScroll = false;
 
+    if (r.name !== "publish") publishNavPushed = false;
+
     if (r.name === "publish") {
       const remembered = String(lastNonPublishPath || "").replace(/\/+$/, "") || "/";
-      const keepRemembered = remembered === "/" || parseRoute(remembered).name === "welcome";
+      const rememberedName = parseRoute(remembered).name;
+      const keepRemembered =
+        remembered === "/" || rememberedName === "welcome" || rememberedName === "post";
       if (currentViewKey && !keepRemembered) lastNonPublishPath = pathFromViewKey(currentViewKey);
       else if (!currentViewKey && (!lastNonPublishPath || parseRoute(lastNonPublishPath).name === "publish")) {
         lastNonPublishPath = "/";
@@ -7852,34 +7881,23 @@
     currentViewKey = "notfound";
   }
 
-  function activeScroller() {
-    const layer = postLayerEl();
-    if (postLayer.open && layer && !layer.hidden) return layer;
-    return null;
-  }
-
   function updateScrollTopBtn() {
     const btn = document.getElementById("scrollTopBtn");
     if (!btn) return;
-    const layer = activeScroller();
-    const top = layer ? layer.scrollTop : window.scrollY || window.pageYOffset || 0;
+    const top = window.scrollY || window.pageYOffset || 0;
     btn.classList.toggle("is-visible", top > 320);
   }
 
   function scrollActiveToTop() {
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
     const behavior = reduce.matches ? "auto" : "smooth";
-    const layer = activeScroller();
-    if (layer) layer.scrollTo({ top: 0, behavior });
-    else window.scrollTo({ top: 0, behavior });
+    window.scrollTo({ top: 0, behavior });
   }
 
   function bindScrollTop() {
     const btn = $("#scrollTopBtn");
     if (!btn) return;
     window.addEventListener("scroll", updateScrollTopBtn, { passive: true });
-    const layer = postLayerEl();
-    if (layer) layer.addEventListener("scroll", updateScrollTopBtn, { passive: true });
     btn.addEventListener("click", scrollActiveToTop);
     updateScrollTopBtn();
   }
@@ -8033,12 +8051,6 @@
 
     document.addEventListener("click", (e) => {
       if (!inInteractiveSurface(e.target)) return;
-      const postBack = e.target.closest(".post-back");
-      if (postBack) {
-        e.preventDefault();
-        history.back();
-        return;
-      }
       const removeTag = e.target.closest("[data-remove-tag]");
       if (removeTag && inInteractiveSurface(removeTag)) {
         e.preventDefault();
@@ -8233,7 +8245,6 @@
 
     window.addEventListener("scroll", repositionOpenSlider, true);
     window.addEventListener("resize", () => {
-      placePostLayer();
       repositionOpenSlider();
     });
 
