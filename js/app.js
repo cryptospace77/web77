@@ -37,7 +37,7 @@
   const LOGO_FAVORITES_SHOW = 10;
   const SUGGESTED_TAGS_SHOW = 24;
   const NOTIF_LIMIT = 100;
-  const NOTIF_SHOW = 40;
+  const NOTIF_SCROLL_PX = 72;
   const NOTIF_POLL_MS = 60000;
 
   const $ = (sel) => document.querySelector(sel);
@@ -109,6 +109,10 @@
     error: "",
     loaded: false,
     markedAt: 0,
+    cursor: "",
+    done: false,
+    loadingMore: false,
+    seen: new Set(),
   };
 
   const feedState = {
@@ -2404,6 +2408,10 @@
     notifState.error = "";
     notifState.loaded = false;
     notifState.markedAt = 0;
+    notifState.cursor = "";
+    notifState.done = false;
+    notifState.loadingMore = false;
+    notifState.seen = new Set();
   }
 
   let resourceGen = 0;
@@ -2512,11 +2520,21 @@
     }, NOTIF_POLL_MS);
   }
 
+  function notificationType(item) {
+    return String((item && item.type) || "")
+      .trim()
+      .toLowerCase();
+  }
+
   function notificationHref(url) {
     let raw = String(url || "").trim();
     if (!raw) return "";
     raw = raw.replace(/^https?:\/\/(?:www\.)?(?:hive\.blog|peakd\.com|ecency\.com)\//i, "");
     raw = raw.replace(/^\//, "");
+    const community =
+      raw.match(/(?:^|\/)(?:trending|hot|created|latest)\/(hive-\d+)\b/i) ||
+      raw.match(/^(?:c\/)?(hive-\d+)\b/i);
+    if (community) return communityHref(community[1]);
     const at = raw.indexOf("@");
     if (at < 0) return "";
     return appHref("/" + raw.slice(at));
@@ -2525,7 +2543,7 @@
   function notificationActor(item) {
     const m = String((item && item.msg) || "").match(/^@([a-z0-9.\-]{3,16})/i);
     if (m) return m[1].toLowerCase();
-    if (item && item.type === "follow") {
+    if (notificationType(item) === "follow") {
       const fromUrl = String((item && item.url) || "").match(/@([a-z0-9.\-]{3,16})/i);
       if (fromUrl) return fromUrl[1].toLowerCase();
     }
@@ -2535,7 +2553,7 @@
   function notificationItemHref(item) {
     const href = notificationHref(item && item.url);
     if (href) return href;
-    if (item && item.type === "follow") {
+    if (notificationType(item) === "follow") {
       const actor = notificationActor(item);
       if (actor) return appHref("/@" + actor);
     }
@@ -2544,61 +2562,210 @@
 
   function notificationMessage(item) {
     let msg = String((item && item.msg) || "");
-    if (item && item.type === "vote" && msg && !/\(-/.test(msg)) {
+    const t = notificationType(item);
+    if (t === "vote" && msg && !/\(-/.test(msg)) {
       msg = msg.replace(" voted on ", " upvoted ");
     }
-    if (item && item.type === "follow" && !msg) {
+    if (t === "follow" && !msg) {
       const actor = notificationActor(item);
       msg = actor ? "@" + actor + " followed you" : "Someone followed you";
     }
     return msg;
   }
 
+  function notificationMessageHtml(item, actor, href) {
+    const msg = notificationMessage(item);
+    const restHref = href ? HiveMd.escapeHtml(href) : "";
+    function wrapRest(text) {
+      const body = HiveMd.escapeHtml(text);
+      if (!body) return "";
+      if (!restHref) return body;
+      return `<a class="session-notif-text" href="${restHref}">${body}</a>`;
+    }
+    if (!actor) return wrapRest(msg) || HiveMd.escapeHtml(msg);
+    const re = new RegExp("^@(" + actor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "i");
+    const m = msg.match(re);
+    const profile = HiveMd.escapeHtml(profileHref(actor));
+    if (!m) {
+      return (
+        `<a class="session-notif-user" href="${profile}">@${HiveMd.escapeHtml(actor)}</a>` +
+        wrapRest(msg ? " " + msg : "")
+      );
+    }
+    return (
+      `<a class="session-notif-user" href="${profile}">${HiveMd.escapeHtml(m[0])}</a>` +
+      wrapRest(msg.slice(m[0].length))
+    );
+  }
+
   function notificationKindLabel(item) {
-    const t = item && item.type;
-    if (t === "vote") return "upvote";
+    const t = notificationType(item);
+    if (t === "vote") {
+      return /\(-/.test(String((item && item.msg) || "")) ? "downvote" : "upvote";
+    }
+    if (t === "reply" || t === "reply_comment") return "reply";
+    if (t === "reblog") return "reblog";
+    if (t === "mention") return "mention";
     if (t === "follow") return "follow";
+    if (t === "subscribe") return "subscribe";
+    if (t === "set_role") return "role";
+    if (t === "set_title" || t === "set_label") return "title";
+    if (t === "set_props") return "settings";
+    if (t === "pin_post") return "pin";
+    if (t === "unpin_post") return "unpin";
+    if (t === "flag_post") return "flag";
+    if (t === "new_community") return "community";
+    return t ? t.replace(/_/g, " ") : "";
+  }
+
+  const NOTIF_HIDDEN_TYPES = {
+    unfollow: true,
+    mute: true,
+    unmute: true,
+    ignore: true,
+    mute_post: true,
+    unmute_post: true,
+  };
+
+  function isHiddenNotif(item) {
+    const t = notificationType(item);
+    if (NOTIF_HIDDEN_TYPES[t]) return true;
+    const msg = String((item && item.msg) || "").toLowerCase();
+    if (/\bunfollowed\b/.test(msg)) return true;
+    if (/\b(?:muted|unmuted|ignored) you\b/.test(msg)) return true;
+    if (t === "follow" && /\b(?:muted|unmuted|unfollowed|ignored)\b/.test(msg)) return true;
+    return false;
+  }
+
+  function notificationId(item) {
+    return item && item.id != null ? String(item.id) : "";
+  }
+
+  function filterNotificationItems(items, seen) {
+    const list = Array.isArray(items) ? items : [];
+    const known = seen || new Set();
+    const out = [];
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i];
+      if (!item || isHiddenNotif(item)) continue;
+      if (!isNotifUnread(item, notifState.lastread)) continue;
+      const id = notificationId(item);
+      if (id) {
+        if (known.has(id)) continue;
+        known.add(id);
+      }
+      out.push(item);
+    }
+    return out;
+  }
+
+  function notifBatchReachedRead(batch) {
+    if (!Array.isArray(batch) || !batch.length) return true;
+    return !isNotifUnread(batch[batch.length - 1], notifState.lastread);
+  }
+
+  function renderNotifItem(item) {
+    const actor = notificationActor(item);
+    const href = notificationItemHref(item);
+    const unread = isNotifUnread(item, notifState.lastread);
+    const type = notificationType(item);
+    const typeCls = type && /^[a-z0-9_]+$/.test(type) ? " is-" + type.replace(/_/g, "-") : "";
+    const cls = "session-notif" + (unread ? " is-unread" : "") + typeCls;
+    const profile = actor ? profileHref(actor) : "";
+    const avatar = actor
+      ? (profile
+          ? `<a class="session-notif-actor" href="${HiveMd.escapeHtml(profile)}" aria-label="@${HiveMd.escapeHtml(actor)}"><img class="session-notif-avatar" src="${HiveMd.avatarUrl(actor, "small")}" alt=""></a>`
+          : `<img class="session-notif-avatar" src="${HiveMd.avatarUrl(actor, "small")}" alt="">`)
+      : "";
+    const kind = notificationKindLabel(item);
+    const time = timeAgo(item.date);
+    const meta = kind ? kind + (time ? " · " + time : "") : time;
+    const timeHtml = href
+      ? `<a class="session-notif-time" href="${HiveMd.escapeHtml(href)}">${HiveMd.escapeHtml(meta)}</a>`
+      : `<span class="session-notif-time">${HiveMd.escapeHtml(meta)}</span>`;
+    return (
+      `<div class="${cls}">` +
+      avatar +
+      `<span class="session-notif-body">` +
+      `<span class="session-notif-msg">${notificationMessageHtml(item, actor, href)}</span>` +
+      timeHtml +
+      `</span></div>`
+    );
+  }
+
+  function notifFooterHtml() {
+    if (notifState.loadingMore) {
+      return `<p class="session-notifs-empty session-notifs-more">Loading…</p>`;
+    }
     return "";
   }
 
-  function isPriorityNotif(item) {
-    const t = item && item.type;
-    return t === "vote" || t === "follow";
+  function syncNotifFooter(wrap) {
+    const el = wrap || $("#sessionNotifs");
+    if (!el) return;
+    const old = el.querySelector(".session-notifs-more");
+    if (old) old.remove();
+    const html = notifFooterHtml();
+    if (html) el.insertAdjacentHTML("beforeend", html);
   }
 
-  function pickNotificationItems(items) {
-    const list = Array.isArray(items) ? items : [];
-    if (list.length <= NOTIF_SHOW) return list.slice();
-    const seen = new Set();
-    const out = [];
-    function add(item) {
-      if (!item || seen.has(item.id)) return;
-      seen.add(item.id);
-      out.push(item);
+  function notifsPanelOpen() {
+    const menu = $("#sessionMenu");
+    return Boolean(menu && menu.classList.contains("is-open"));
+  }
+
+  function notifsNearBottom(wrap) {
+    if (!wrap) return false;
+    return wrap.scrollTop + wrap.clientHeight >= wrap.scrollHeight - NOTIF_SCROLL_PX;
+  }
+
+  function maybeLoadMoreNotifs() {
+    if (!notifsPanelOpen() || !notifState.loaded || notifState.done || notifState.loadingMore) return;
+    const wrap = $("#sessionNotifs");
+    if (!wrap) return;
+    if (wrap.clientHeight < 8) return;
+    if (notifsNearBottom(wrap)) loadMoreNotifications();
+  }
+
+  function bindNotifScroll() {
+    const wrap = $("#sessionNotifs");
+    if (!wrap || wrap.dataset.scrollBound === "1") return;
+    wrap.dataset.scrollBound = "1";
+    wrap.addEventListener(
+      "scroll",
+      () => {
+        maybeLoadMoreNotifs();
+      },
+      { passive: true }
+    );
+  }
+
+  function prependNotifDom(items) {
+    const wrap = $("#sessionNotifs");
+    if (!wrap || !items.length) return;
+    const first = wrap.querySelector(".session-notif");
+    if (!first) {
+      paintNotifs();
+      return;
     }
-    for (let i = 0; i < list.length && out.length < NOTIF_SHOW; i++) add(list[i]);
-    for (let i = 0; i < list.length; i++) {
-      const item = list[i];
-      if (!isPriorityNotif(item) || seen.has(item.id)) continue;
-      let drop = -1;
-      for (let j = out.length - 1; j >= 0; j--) {
-        if (!isPriorityNotif(out[j])) {
-          drop = j;
-          break;
-        }
-      }
-      if (drop < 0) break;
-      seen.delete(out[drop].id);
-      out.splice(drop, 1);
-      add(item);
+    const before = wrap.scrollHeight;
+    const top = wrap.scrollTop;
+    first.insertAdjacentHTML("beforebegin", items.map(renderNotifItem).join(""));
+    if (top > 0) wrap.scrollTop = top + (wrap.scrollHeight - before);
+  }
+
+  function appendNotifDom(items) {
+    const wrap = $("#sessionNotifs");
+    if (!wrap || !items.length) return;
+    if (!wrap.querySelector(".session-notif")) {
+      paintNotifs();
+      return;
     }
-    out.sort((a, b) => {
-      const db = String((b && b.date) || "");
-      const da = String((a && a.date) || "");
-      if (db !== da) return db.localeCompare(da);
-      return String((b && b.id) || "").localeCompare(String((a && a.id) || ""));
-    });
-    return out;
+    const footer = wrap.querySelector(".session-notifs-more");
+    const html = items.map(renderNotifItem).join("");
+    if (footer) footer.insertAdjacentHTML("beforebegin", html);
+    else wrap.insertAdjacentHTML("beforeend", html);
+    syncNotifFooter(wrap);
   }
 
   function isNotifUnread(item, lastread) {
@@ -2648,6 +2815,7 @@
   function paintNotifs() {
     const wrap = $("#sessionNotifs");
     if (!wrap) return;
+    const top = wrap.scrollTop;
     if (!notifState.loaded && !notifState.error) {
       wrap.innerHTML = `<p class="session-notifs-empty">Loading…</p>`;
       return;
@@ -2660,35 +2828,53 @@
       wrap.innerHTML = `<p class="session-notifs-empty">No notifications</p>`;
       return;
     }
-    wrap.innerHTML = notifState.items
-      .map((item) => {
-        const actor = notificationActor(item);
-        const href = notificationItemHref(item);
-        const unread = isNotifUnread(item, notifState.lastread);
-        const type = item && item.type ? String(item.type) : "";
-        const cls =
-          "session-notif" +
-          (unread ? " is-unread" : "") +
-          (type === "vote" ? " is-vote" : "") +
-          (type === "follow" ? " is-follow" : "");
-        const avatar = actor
-          ? `<img class="session-notif-avatar" src="${HiveMd.avatarUrl(actor, "small")}" alt="">`
-          : "";
-        const kind = notificationKindLabel(item);
-        const time = timeAgo(item.date);
-        const meta = kind ? kind + (time ? " · " + time : "") : time;
-        const body =
-          avatar +
-          `<span class="session-notif-body">` +
-          `<span class="session-notif-msg">${HiveMd.escapeHtml(notificationMessage(item))}</span>` +
-          `<span class="session-notif-time">${HiveMd.escapeHtml(meta)}</span>` +
-          `</span>`;
-        if (href) {
-          return `<a class="${cls}" href="${HiveMd.escapeHtml(href)}">${body}</a>`;
-        }
-        return `<div class="${cls}">${body}</div>`;
-      })
-      .join("");
+    wrap.innerHTML = notifState.items.map(renderNotifItem).join("") + notifFooterHtml();
+    wrap.scrollTop = top;
+  }
+
+  async function loadMoreNotifications() {
+    const user = observer();
+    if (!user || !notifState.loaded || notifState.loadingMore || notifState.done) return;
+    if (!notifsPanelOpen()) return;
+    const cursor = notifState.cursor;
+    if (!cursor) {
+      notifState.done = true;
+      syncNotifFooter();
+      return;
+    }
+    const gen = notifGen;
+    notifState.loadingMore = true;
+    syncNotifFooter();
+    try {
+      const batch = await HiveApi.accountNotifications(user, {
+        limit: NOTIF_LIMIT,
+        lastId: cursor,
+      });
+      if (gen !== notifGen || observer() !== user) return;
+      const lastId = notificationId(batch[batch.length - 1]);
+      notifState.cursor = lastId;
+      if (
+        !batch.length ||
+        batch.length < NOTIF_LIMIT ||
+        !lastId ||
+        lastId === cursor ||
+        notifBatchReachedRead(batch)
+      ) {
+        notifState.done = true;
+      }
+      const more = filterNotificationItems(batch, notifState.seen);
+      if (more.length) {
+        notifState.items = notifState.items.concat(more);
+        appendNotifDom(more);
+      }
+    } catch {
+      /* keep the cursor so the next scroll retries */
+    } finally {
+      if (gen !== notifGen) return;
+      notifState.loadingMore = false;
+      syncNotifFooter();
+      maybeLoadMoreNotifs();
+    }
   }
 
   async function loadNotifications() {
@@ -2696,16 +2882,14 @@
     if (!user) return;
     const gen = ++notifGen;
     notifState.user = user;
+    notifState.loadingMore = false;
     try {
-      const [unread, items] = await Promise.all([
+      const [unread, batch] = await Promise.all([
         HiveApi.unreadNotifications(user),
         HiveApi.accountNotifications(user, { limit: NOTIF_LIMIT }),
       ]);
       if (gen !== notifGen || observer() !== user) return;
       const markedFresh = notifState.markedAt && Date.now() - notifState.markedAt < 45000;
-      notifState.items = pickNotificationItems(items);
-      notifState.loaded = true;
-      notifState.error = "";
       if (markedFresh && unread.unread > 0) {
         notifState.unread = 0;
       } else {
@@ -2713,8 +2897,33 @@
         notifState.lastread = unread.lastread || "";
         notifState.markedAt = 0;
       }
+      const items = Array.isArray(batch) ? batch : [];
+      const lastId = notificationId(items[items.length - 1]);
+      const reachedRead = notifBatchReachedRead(items);
+      if (!notifState.loaded) {
+        notifState.seen = new Set();
+        notifState.items = filterNotificationItems(items, notifState.seen);
+        notifState.cursor = lastId;
+        notifState.done = !items.length || items.length < NOTIF_LIMIT || !lastId || reachedRead;
+        notifState.loaded = true;
+        notifState.error = "";
+        paintNotifs();
+      } else {
+        const kept = notifState.items.filter((item) => isNotifUnread(item, notifState.lastread));
+        if (kept.length !== notifState.items.length) {
+          notifState.items = kept;
+          paintNotifs();
+        }
+        const fresh = filterNotificationItems(items, notifState.seen);
+        notifState.error = "";
+        if (fresh.length) {
+          notifState.items = fresh.concat(notifState.items);
+          prependNotifDom(fresh);
+        }
+        if (reachedRead) notifState.done = true;
+      }
       paintBadge();
-      paintNotifs();
+      maybeLoadMoreNotifs();
     } catch (err) {
       if (gen !== notifGen) return;
       notifState.error = (err && err.message) || "Could not load notifications.";
@@ -2758,6 +2967,10 @@
         notifState.unread = 0;
         notifState.lastread = date;
         notifState.markedAt = Date.now();
+        notifState.items = [];
+        notifState.seen = new Set();
+        notifState.cursor = "";
+        notifState.done = true;
         paintBadge();
         paintNotifs();
       })
@@ -2923,6 +3136,7 @@
       $("#accountLogoutBtn").addEventListener("click", logout);
       $("#markReadBtn").addEventListener("click", markNotificationsRead);
       bindSessionAccount();
+      bindNotifScroll();
       paintBadge();
       paintNotifs();
       paintAccountResources();
@@ -2982,6 +3196,7 @@
     if (open) {
       setAccountMenuOpen(false);
       loadAccountResources();
+      maybeLoadMoreNotifs();
     }
   }
 

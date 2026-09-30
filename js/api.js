@@ -494,7 +494,7 @@
       limit: Math.min(Math.max(options.limit || 20, 1), 100),
       min_score: options.minScore == null ? 0 : options.minScore,
     };
-    if (options.lastId) params.last_id = options.lastId;
+    if (options.lastId) params.last_id = String(options.lastId);
     const result = await hiveRpc("bridge.account_notifications", params);
     return Array.isArray(result) ? result : [];
   }

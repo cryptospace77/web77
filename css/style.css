@@ -894,6 +894,11 @@ html.has-mouse .session-account:focus-within .session-account-menu {
   color: var(--gray);
 }
 
+.session-notifs-more {
+  padding: 0.45rem 0.8rem;
+  text-align: center;
+}
+
 .session-notif {
   display: flex;
   align-items: flex-start;
@@ -905,7 +910,6 @@ html.has-mouse .session-account:focus-within .session-account-menu {
 }
 
 .session-notif:hover {
-  color: var(--yellow);
   background: rgba(227, 19, 55, 0.12);
   text-shadow: none;
 }
@@ -914,13 +918,26 @@ html.has-mouse .session-account:focus-within .session-account-menu {
   color: var(--yellow);
 }
 
+.session-notif-actor {
+  display: block;
+  flex-shrink: 0;
+  line-height: 0;
+  margin-top: 0.1rem;
+  text-decoration: none;
+}
+
 .session-notif-avatar {
   width: 22px;
   height: 22px;
   border-radius: 50%;
   object-fit: cover;
   flex-shrink: 0;
-  margin-top: 0.1rem;
+}
+
+.session-notif-user,
+.session-notif-text {
+  color: inherit;
+  text-decoration: none;
 }
 
 .session-notif-body {
@@ -940,6 +957,11 @@ html.has-mouse .session-account:focus-within .session-account-menu {
 .session-notif-time {
   font-family: var(--font-mono);
   font-size: 0.68rem;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.session-notif-time:hover {
   color: var(--text-muted);
 }
 
