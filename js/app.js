@@ -65,6 +65,17 @@
   let currentViewKey = "";
   let welcomeHold = false;
   let currentPost = null;
+  const postLayer = {
+    open: false,
+    author: "",
+    permlink: "",
+    gen: 0,
+    scrollY: 0,
+    locked: false,
+    padRight: "",
+  };
+  const postSnaps = new Map();
+  const POST_SNAP_MAX = 6;
   const communityState = {
     name: "",
     info: null,
@@ -1932,18 +1943,57 @@
     return `<a class="comment-n comment-count-link" href="${HiveMd.escapeHtml(href)}">C ${n}</a>`;
   }
 
-  function scrollToComments() {
-    const el = document.getElementById("comments");
+  function eventElement(target) {
+    if (!target) return null;
+    if (target.nodeType === 1) return target;
+    return target.parentElement || null;
+  }
+
+  function inInteractiveSurface(target) {
+    const el = eventElement(target);
+    if (!el) return false;
+    if (view && view.contains(el)) return true;
+    const layer = document.getElementById("postLayer");
+    return Boolean(layer && !layer.hidden && layer.contains(el));
+  }
+
+  function scrollTargetIntoView(el, behavior) {
     if (!el) return false;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
-    el.scrollIntoView({ behavior: reduce.matches ? "auto" : "smooth", block: "start" });
+    const chosen = behavior || (reduce.matches ? "auto" : "smooth");
+    const layer = document.getElementById("postLayer");
+    if (layer && postLayer.open && layer.contains(el)) {
+      const bar = layer.querySelector(".post-back-bar");
+      const barH = bar ? bar.getBoundingClientRect().height : 0;
+      // Read geometry after the layer is shown so a just-opened post has a
+      // real scroll height. Assigning scrollTop avoids a smooth animation
+      // that can be dropped when the layer was hidden a moment ago.
+      void layer.offsetHeight;
+      const top = Math.max(
+        0,
+        layer.scrollTop +
+          (el.getBoundingClientRect().top - layer.getBoundingClientRect().top) -
+          barH -
+          8
+      );
+      if (chosen === "auto") layer.scrollTop = top;
+      else layer.scrollTo({ top, behavior: chosen });
+      return true;
+    }
+    el.scrollIntoView({ behavior: chosen, block: "start" });
     return true;
   }
 
-  function scrollToAnchor(hash) {
+  function scrollToComments(behavior) {
+    const el = document.getElementById("comments");
+    if (!el) return false;
+    return scrollTargetIntoView(el, behavior);
+  }
+
+  function scrollToAnchor(hash, behavior) {
     const raw = String(hash == null ? location.hash : hash).replace(/^#/, "");
-    if (!raw) return false;
-    if (raw === "comments") return scrollToComments();
+    if (!raw || raw.charAt(0) === "/") return false;
+    if (raw === "comments") return scrollToComments(behavior);
     let el = document.getElementById(raw);
     if (!el) {
       try {
@@ -1953,9 +2003,7 @@
       }
     }
     if (!el) return false;
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
-    el.scrollIntoView({ behavior: reduce.matches ? "auto" : "smooth", block: "start" });
-    return true;
+    return scrollTargetIntoView(el, behavior);
   }
 
   function tagsOf(post) {
@@ -2485,7 +2533,7 @@
         try {
           const u = new URL(href, location.href);
           if (u.pathname === location.pathname) {
-            history.pushState(null, "", u.pathname + u.search + u.hash);
+            history.pushState(history.state, "", u.pathname + u.search + u.hash);
           }
         } catch {
           /* ignore */
@@ -4179,8 +4227,17 @@
     }
   }
 
+  function activeArticle() {
+    const pv = document.getElementById("postView");
+    if (postLayer.open && pv) {
+      const article = pv.querySelector("article.article");
+      if (article) return article;
+    }
+    return view ? view.querySelector("article.article") : null;
+  }
+
   function applyPostEditToView(title, body) {
-    const article = view.querySelector("article.article");
+    const article = activeArticle();
     if (!article) return;
     const h1 = article.querySelector(":scope > h1");
     if (h1) h1.textContent = title || "(untitled)";
@@ -5212,9 +5269,26 @@
     if (!section) return;
     const n = Math.max(0, (Number(section.getAttribute("data-count")) || 0) + delta);
     section.setAttribute("data-count", String(n));
-    document.querySelectorAll(".comment-n").forEach((el) => {
-      el.textContent = "C " + n;
+    const article = section.closest(".article");
+    if (article) {
+      article.querySelectorAll(".comment-n").forEach((el) => {
+        el.textContent = "C " + n;
+      });
+    }
+    const author = section.getAttribute("data-root-author");
+    const permlink = section.getAttribute("data-root-permlink");
+    if (!author || !permlink) return;
+    const needle = ("/@" + author + "/" + permlink).toLowerCase();
+    document.querySelectorAll(".post-card .comment-count-link").forEach((el) => {
+      const link = String(el.getAttribute("href") || "").toLowerCase();
+      if (link.indexOf(needle) === -1) return;
+      const cur = Number(String(el.textContent || "").replace(/[^0-9]/g, "")) || 0;
+      el.textContent = "C " + Math.max(0, cur + delta);
     });
+    const item = findLoadedPost(author, permlink);
+    if (item && item.children != null) {
+      item.children = Math.max(0, (Number(item.children) || 0) + delta);
+    }
   }
 
   function appendPostedComment(parentAuthor, parentPermlink, html) {
@@ -5582,68 +5656,537 @@
     }
   }
 
-  async function renderPost(author, permlink) {
-    view.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Opening post…</div>`;
-    try {
-      const discussion = await HiveApi.getDiscussion(author, permlink, observer());
-      setNodeLabel();
-      const root = buildCommentTree(discussion, author, permlink);
-      if (!root) {
+  /* ─── Post layer ─── */
+  function postLayerEl() {
+    return document.getElementById("postLayer");
+  }
+
+  function postViewEl() {
+    return document.getElementById("postView");
+  }
+
+  function snapKey(author, permlink) {
+    return (
+      String(author || "")
+        .replace(/^@/, "")
+        .toLowerCase() +
+      "/" +
+      String(permlink || "").toLowerCase()
+    );
+  }
+
+  function samePostId(post, author, permlink) {
+    if (!post) return false;
+    return (
+      String(post.author || "")
+        .replace(/^@/, "")
+        .toLowerCase() ===
+        String(author || "")
+          .replace(/^@/, "")
+          .toLowerCase() &&
+      String(post.permlink || "").toLowerCase() === String(permlink || "").toLowerCase()
+    );
+  }
+
+  function findLoadedPost(author, permlink) {
+    const items = feedState.items || [];
+    for (let i = 0; i < items.length; i++) {
+      if (samePostId(items[i], author, permlink)) return items[i];
+    }
+    if (samePostId(currentPost, author, permlink)) return currentPost;
+    return null;
+  }
+
+  function postCanGoBack() {
+    if (currentViewKey) return true;
+    const state = history.state;
+    return Boolean(state && state.cs77 === "post" && state.underKey);
+  }
+
+  function postBackHtml() {
+    if (!postCanGoBack()) return "";
+    return `<div class="post-back-bar"><button type="button" class="back-link post-back">Back</button></div>`;
+  }
+
+  function commentsPendingHtml() {
+    return `<div class="loading-row post-comments-pending"><span class="btn-loader" aria-hidden="true"></span> Loading comments…</div>`;
+  }
+
+  function commentsErrorHtml(msg) {
+    return `<p class="feed-hint post-comments-error">${HiveMd.escapeHtml(msg || "Couldn't load comments.")}</p>`;
+  }
+
+  function discussionCommentCount(discussion, root) {
+    if (discussion && typeof discussion === "object") {
+      return Object.values(discussion).filter((node) => node && Number(node.depth) > 0).length;
+    }
+    return Number(root && root.children) || 0;
+  }
+
+  function articleHtml(root, opts) {
+    const options = opts || {};
+    const community = communityLabelHtml(root, "article-community");
+    const commentCount =
+      options.commentCount != null ? options.commentCount : Number(root.children) || 0;
+    const user = observer();
+    const composer = user
+      ? composerHtml(root.author, root.permlink, {
+          placeholder: "Write a comment…",
+          submitLabel: "Comment",
+        })
+      : "";
+    const postEdit = editButtonHtml("post", root.author, root.permlink);
+    const commentsBody =
+      options.commentsHtml != null ? options.commentsHtml : commentsPendingHtml();
+    return `
+      <article class="article">
+        ${options.back === false ? "" : postBackHtml()}
+        ${community}
+        <h1>${HiveMd.escapeHtml(root.title || "(untitled)")}</h1>
+        <div class="article-byline">
+          ${authorLinkHtml(root.author, "medium")}
+          <span>· ${Math.floor(HiveMd.displayReputation(root.author_reputation))}</span>
+          <span>· ${metaTimeHtml(root.created, postPath(root))}</span>
+          <div class="article-stats">
+            ${voteControlHtml(root, "plain")}
+            ${commentCountHtml(commentCount, "#comments")}
+            ${payoutHtml(root, false)}
+          </div>
+        </div>
+        <div class="tags">
+          ${tagsOf(root).map(tagChipHtml).join("")}
+        </div>
+        <div class="post-body">${HiveMd.renderMarkdown(root.body || "")}</div>
+        <div class="post-stats-bar" id="stats">
+          ${voteControlHtml(root, "pills")}
+          ${payoutHtml(root, true)}
+          ${postEdit}
+        </div>
+        <section class="comments" id="comments" data-root-author="${HiveMd.escapeHtml(root.author)}" data-root-permlink="${HiveMd.escapeHtml(root.permlink)}" data-count="${commentCount}">
+          ${composer}
+          <div class="comment-list">
+            ${commentsBody}
+          </div>
+        </section>
+      </article>
+    `;
+  }
+
+  function renderedCommentsHtml(root) {
+    const comments = (root._replies || []).map(renderComment).join("");
+    return comments || `<p class="feed-hint">No comments yet.</p>`;
+  }
+
+  function paintPostMessage(html) {
+    const pv = postViewEl();
+    if (!pv) return;
+    pv.innerHTML = postBackHtml() + html;
+  }
+
+  function setPostTitle(root) {
+    document.title = `${(root && root.title) || "Post"} — Crypto Space 77`;
+  }
+
+  function setCommentCount(n) {
+    const section = document.getElementById("comments");
+    if (!section) return;
+    section.setAttribute("data-count", String(n));
+    const article = section.closest(".article");
+    if (!article) return;
+    article.querySelectorAll(".comment-n").forEach((el) => {
+      el.textContent = "C " + n;
+    });
+  }
+
+  function fillCommentList(html) {
+    const section = document.getElementById("comments");
+    if (!section || !postLayer.open) return;
+    const list = section.querySelector(".comment-list");
+    if (list) list.innerHTML = html;
+  }
+
+  function refreshArticleCommunity(root) {
+    const article = activeArticle();
+    if (!article) return;
+    const html = communityLabelHtml(root, "article-community");
+    const existing = article.querySelector(":scope > .article-community");
+    if (!html) return;
+    const wrap = document.createElement("div");
+    wrap.innerHTML = html;
+    const next = wrap.firstElementChild;
+    if (!next) return;
+    if (!existing) {
+      const h1 = article.querySelector(":scope > h1");
+      if (h1) h1.insertAdjacentElement("beforebegin", next);
+      return;
+    }
+    if (
+      existing.textContent !== next.textContent ||
+      existing.getAttribute("href") !== next.getAttribute("href")
+    ) {
+      existing.replaceWith(next);
+    }
+  }
+
+  function refreshArticleVotes(root) {
+    if (!root || openSlider) return;
+    const article = activeArticle();
+    if (!article) return;
+    const viewState = voteView(root);
+    article.querySelectorAll(".vote-n").forEach((el) => {
+      el.textContent = String(viewState.upCount);
+    });
+    article.querySelectorAll(".downvote-n").forEach((el) => {
+      el.textContent = String(viewState.downCount);
+    });
+    const payout = formatPayout(root);
+    article.querySelectorAll(".payout").forEach((el) => {
+      el.textContent = payout;
+    });
+    rememberPayout(root);
+  }
+
+  function patchOpenArticle(prev, root) {
+    const article = activeArticle();
+    if (!article) return false;
+    const h1 = article.querySelector(":scope > h1");
+    if (h1 && String((prev && prev.title) || "") !== String(root.title || "")) {
+      h1.textContent = root.title || "(untitled)";
+    }
+    if (String((prev && prev.body) || "") !== String(root.body || "")) {
+      const bodyEl = article.querySelector(":scope > .post-body");
+      if (bodyEl) bodyEl.innerHTML = HiveMd.renderMarkdown(root.body || "");
+    }
+    if (!prev || tagsOf(prev).join("\n") !== tagsOf(root).join("\n")) {
+      const tagsEl = article.querySelector(":scope > .tags");
+      if (tagsEl) tagsEl.innerHTML = tagsOf(root).map(tagChipHtml).join("");
+    }
+    refreshArticleCommunity(root);
+    refreshArticleVotes(root);
+    setPostTitle(root);
+    return true;
+  }
+
+  function paintArticle(root, opts) {
+    const pv = postViewEl();
+    if (!pv || !root) return false;
+    const options = opts || {};
+    currentPost = root;
+    rememberContent(root);
+    pv.innerHTML = articleHtml(root, options);
+    setPostTitle(root);
+    return true;
+  }
+
+  function htmlHasPendingComments(html) {
+    return String(html || "").indexOf("post-comments-pending") !== -1;
+  }
+
+  function rememberPostSnap() {
+    if (!postLayer.author || !postLayer.permlink) return;
+    const pv = postViewEl();
+    const layer = postLayerEl();
+    if (!pv || !pv.innerHTML.trim()) return;
+    const html = pv.innerHTML;
+    const key = snapKey(postLayer.author, postLayer.permlink);
+    const pending = htmlHasPendingComments(html);
+    const prev = postSnaps.get(key);
+    if (pending && prev && !htmlHasPendingComments(prev.html)) return;
+    postSnaps.delete(key);
+    postSnaps.set(key, {
+      html,
+      scroll: layer ? layer.scrollTop : 0,
+      title: document.title,
+      root: currentPost,
+    });
+    while (postSnaps.size > POST_SNAP_MAX) {
+      const oldest = postSnaps.keys().next().value;
+      postSnaps.delete(oldest);
+    }
+  }
+
+  function showPostSnap(snap) {
+    const pv = postViewEl();
+    if (!pv || !snap || !snap.html) return false;
+    pv.innerHTML = snap.html;
+    if (snap.root) {
+      currentPost = snap.root;
+      rememberContent(snap.root);
+    }
+    if (snap.title) document.title = snap.title;
+    return true;
+  }
+
+  function placePostLayer() {
+    const layer = postLayerEl();
+    if (!layer || layer.hidden) return;
+    const header = document.querySelector(".header");
+    let top = 0;
+    if (header) {
+      const bottom = header.getBoundingClientRect().bottom;
+      if (bottom > 0) top = Math.round(bottom);
+    }
+    layer.style.top = top + "px";
+  }
+
+  function lockPageScroll() {
+    if (postLayer.locked) return;
+    const y = postLayer.scrollY || 0;
+    postLayer.locked = true;
+    const body = document.body;
+    const gap = Math.max(0, window.innerWidth - document.documentElement.clientWidth);
+    postLayer.padRight = body.style.paddingRight || "";
+    body.classList.add("is-post-open");
+    body.style.position = "fixed";
+    body.style.top = y ? "-" + y + "px" : "0";
+    body.style.left = "0";
+    body.style.right = "0";
+    body.style.width = "100%";
+    if (gap) body.style.paddingRight = gap + "px";
+  }
+
+  function scrollWindowInstant(y) {
+    const root = document.documentElement;
+    const prev = root.style.scrollBehavior;
+    root.style.scrollBehavior = "auto";
+    window.scrollTo(0, y);
+    root.style.scrollBehavior = prev;
+  }
+
+  function unlockPageScroll(restore) {
+    if (!postLayer.locked) return;
+    const y = restore ? postLayer.scrollY || 0 : 0;
+    postLayer.locked = false;
+    const body = document.body;
+    body.classList.remove("is-post-open");
+    body.style.position = "";
+    body.style.top = "";
+    body.style.left = "";
+    body.style.right = "";
+    body.style.width = "";
+    body.style.paddingRight = postLayer.padRight || "";
+    // html { scroll-behavior: smooth } would animate this jump and the feed
+    // would visibly travel. An inline auto override settles it in one step.
+    scrollWindowInstant(y);
+  }
+
+  function setPostBackgroundHidden(hidden) {
+    const app = document.querySelector(".app");
+    const footer = document.querySelector(".footer");
+    const flyer = document.getElementById("welcomeFlyer");
+    [app, footer, flyer].forEach((el) => {
+      if (!el) return;
+      if (hidden) el.setAttribute("aria-hidden", "true");
+      else el.removeAttribute("aria-hidden");
+    });
+  }
+
+  function ensurePostHistory() {
+    const state = history.state;
+    if (!postLayer.locked) {
+      if (state && state.cs77 === "post" && Number.isFinite(Number(state.underScroll))) {
+        postLayer.scrollY = Number(state.underScroll);
+      } else {
+        postLayer.scrollY = window.scrollY || window.pageYOffset || 0;
+      }
+    }
+    const underKey =
+      (state && state.cs77 === "post" && state.underKey) || currentViewKey || "";
+    history.replaceState(
+      { cs77: "post", underScroll: postLayer.scrollY || 0, underKey },
+      "",
+      location.href
+    );
+  }
+
+  function revealPostLayer() {
+    const layer = postLayerEl();
+    if (!layer) return null;
+    ensurePostHistory();
+    lockPageScroll();
+    layer.hidden = false;
+    placePostLayer();
+    setPostBackgroundHidden(true);
+    postLayer.open = true;
+    updateScrollTopBtn();
+    return layer;
+  }
+
+  function suspendPostLayer(opts) {
+    if (!postLayer.open) return;
+    stopCommentJump();
+    rememberPostSnap();
+    postLayer.gen += 1;
+    const layer = postLayerEl();
+    if (layer) layer.hidden = true;
+    postLayer.open = false;
+    postLayer.author = "";
+    postLayer.permlink = "";
+    setPostBackgroundHidden(false);
+    unlockPageScroll(!(opts && opts.restoreScroll === false));
+    updateScrollTopBtn();
+  }
+
+  function postStill(gen, author, permlink) {
+    return (
+      postLayer.gen === gen &&
+      postLayer.open &&
+      postLayer.author === author &&
+      postLayer.permlink === permlink
+    );
+  }
+
+  function stopCommentJump() {
+    if (postLayer.jumpCleanup) {
+      postLayer.jumpCleanup();
+      postLayer.jumpCleanup = null;
+    }
+    if (postLayer.jumpObserver) {
+      postLayer.jumpObserver.disconnect();
+      postLayer.jumpObserver = null;
+    }
+    if (postLayer.jumpTimer) {
+      clearTimeout(postLayer.jumpTimer);
+      postLayer.jumpTimer = 0;
+    }
+  }
+
+  function armCommentJump() {
+    stopCommentJump();
+    const layer = postLayerEl();
+    const article = document.querySelector("#postView .article");
+    if (!layer || !article || typeof ResizeObserver !== "function") return;
+    const gen = postLayer.gen;
+    let ignore = false;
+    const onUser = () => {
+      ignore = true;
+      stopCommentJump();
+    };
+    layer.addEventListener("wheel", onUser, { passive: true });
+    layer.addEventListener("touchstart", onUser, { passive: true });
+    const realign = () => {
+      if (ignore || !postLayer.open || postLayer.gen !== gen) return;
+      scrollToComments("auto");
+    };
+    const observer = new ResizeObserver(realign);
+    observer.observe(article);
+    postLayer.jumpObserver = observer;
+    postLayer.jumpCleanup = () => {
+      layer.removeEventListener("wheel", onUser);
+      layer.removeEventListener("touchstart", onUser);
+    };
+    postLayer.jumpTimer = setTimeout(stopCommentJump, 4000);
+    article.querySelectorAll("img").forEach((img) => {
+      if (!img.complete) img.addEventListener("load", realign, { once: true });
+    });
+  }
+
+  function settlePostAnchor(opts, commentsReady) {
+    if (!opts || !postLayer.open) return;
+    if (opts.jumpComments) {
+      // The post can grow after the first paint (images, then the thread).
+      // Keep the comments section under the back bar until that settles,
+      // unless the reader has already scrolled away.
+      scrollToComments("auto");
+      armCommentJump();
+      return;
+    }
+    if (opts.anchor && commentsReady) scrollToAnchor(opts.anchor, "auto");
+  }
+
+  async function presentPost(author, permlink, opts) {
+    const a = String(author || "")
+      .replace(/^@/, "")
+      .toLowerCase();
+    const p = String(permlink || "");
+    const options = opts || {};
+    const layer = postLayerEl();
+    const pv = postViewEl();
+    if (!layer || !pv) {
+      view.innerHTML = notFoundHtml("Could not open this post.");
+      return;
+    }
+
+    if (postLayer.open && postLayer.author === a && postLayer.permlink === p && pv.innerHTML.trim()) {
+      settlePostAnchor(options, !htmlHasPendingComments(pv.innerHTML));
+      return;
+    }
+
+    if (postLayer.open) rememberPostSnap();
+
+    const gen = ++postLayer.gen;
+    postLayer.author = a;
+    postLayer.permlink = p;
+    const snap = postSnaps.get(snapKey(a, p));
+    const useSnap = Boolean(snap && snap.html);
+    let restoreScroll = null;
+    if (useSnap) {
+      showPostSnap(snap);
+      if (!options.jumpComments && !options.anchor) restoreScroll = snap.scroll || 0;
+    } else {
+      const cached = findLoadedPost(a, p);
+      if (cached && (cached.title || cached.body)) {
+        paintArticle(cached, {
+          commentCount: Number(cached.children) || 0,
+          commentsHtml: commentsPendingHtml(),
+        });
+      } else {
+        paintPostMessage(
+          `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Opening post…</div>`
+        );
         currentPost = null;
-        view.innerHTML = notFoundHtml("This post could not be found on Hive.");
+      }
+    }
+
+    revealPostLayer();
+    const scroller = postLayerEl();
+    if (scroller) scroller.scrollTop = restoreScroll != null ? restoreScroll : 0;
+    const shown = postViewEl();
+    const articleShown = Boolean(shown && shown.querySelector("article.article"));
+    // "Opening post…" has no article yet. A cached card does, with a pending
+    // comment list. Either one still needs the discussion.
+    const pendingNow = !articleShown || htmlHasPendingComments(shown.innerHTML);
+    settlePostAnchor(options, !pendingNow);
+    if (!pendingNow) return;
+
+    try {
+      const discussion = await HiveApi.getDiscussion(a, p, observer());
+      if (!postStill(gen, a, p)) return;
+      setNodeLabel();
+      const root = buildCommentTree(discussion, a, p);
+      if (!root) {
+        if (!activeArticle()) {
+          currentPost = null;
+          paintPostMessage(notFoundHtml("This post could not be found on Hive."));
+        } else {
+          fillCommentList(commentsErrorHtml("Couldn't load comments."));
+        }
         return;
       }
       clearError();
-      contentByKey.clear();
+      const prev = currentPost;
       currentPost = root;
       rememberContent(root);
-      const community = communityLabelHtml(root, "article-community");
-      const comments = (root._replies || []).map(renderComment).join("");
-      const commentCount = Object.values(discussion).filter((n) => n.depth > 0).length;
-      const user = observer();
-      const composer = user
-        ? composerHtml(root.author, root.permlink, {
-            placeholder: "Write a comment…",
-            submitLabel: "Comment",
-          })
-        : "";
-      const postEdit = editButtonHtml("post", root.author, root.permlink);
-      view.innerHTML = `
-        <article class="article">
-          ${community}
-          <h1>${HiveMd.escapeHtml(root.title || "(untitled)")}</h1>
-          <div class="article-byline">
-            ${authorLinkHtml(root.author, "medium")}
-            <span>· ${Math.floor(HiveMd.displayReputation(root.author_reputation))}</span>
-            <span>· ${metaTimeHtml(root.created, postPath(root))}</span>
-            <div class="article-stats">
-              ${voteControlHtml(root, "plain")}
-              ${commentCountHtml(commentCount, "#comments")}
-              ${payoutHtml(root, false)}
-            </div>
-          </div>
-          <div class="tags">
-            ${tagsOf(root).map(tagChipHtml).join("")}
-          </div>
-          <div class="post-body">${HiveMd.renderMarkdown(root.body || "")}</div>
-          <div class="post-stats-bar" id="stats">
-            ${voteControlHtml(root, "pills")}
-            ${payoutHtml(root, true)}
-            ${postEdit}
-          </div>
-          <section class="comments" id="comments" data-root-author="${HiveMd.escapeHtml(root.author)}" data-root-permlink="${HiveMd.escapeHtml(root.permlink)}" data-count="${commentCount}">
-            ${composer}
-            <div class="comment-list">
-              ${comments || `<p class="feed-hint">No comments yet.</p>`}
-            </div>
-          </section>
-        </article>
-      `;
-      document.title = `${root.title || "Post"} — Crypto Space 77`;
+      const count = discussionCommentCount(discussion, root);
+      const commentsHtml = renderedCommentsHtml(root);
+      const article = activeArticle();
+      if (!article) {
+        paintArticle(root, { commentCount: count, commentsHtml });
+      } else {
+        patchOpenArticle(prev, root);
+        setCommentCount(count);
+        fillCommentList(commentsHtml);
+      }
+      settlePostAnchor(options, true);
     } catch (err) {
-      currentPost = null;
-      showError(err.message || String(err));
-      view.innerHTML = notFoundHtml("Could not load this post.");
+      if (!postStill(gen, a, p)) return;
+      const msg = err.message || String(err);
+      if (!activeArticle()) {
+        currentPost = null;
+        paintPostMessage(notFoundHtml(msg || "Could not load this post."));
+      } else {
+        fillCommentList(commentsErrorHtml(msg));
+      }
     }
   }
 
@@ -7155,11 +7698,46 @@
     if (btn) btn.addEventListener("click", scrollToFeed);
   }
 
+  function applyRouteTitle(r) {
+    if (!r) return;
+    if (r.name === "feed") {
+      document.title = r.tag
+        ? "#" + r.tag + " — Crypto Space 77"
+        : r.sort === "feed"
+          ? "Feed — Crypto Space 77"
+          : "Crypto Space 77";
+    } else if (r.name === "profile") {
+      document.title = profilePageTitle(r.author, r.page);
+    } else if (r.name === "community") {
+      document.title = communityPageTitle(communityState.info, r.community, r.page);
+    } else if (r.name === "tags") {
+      document.title = "Tags — Crypto Space 77";
+    } else if (r.name === "communities") {
+      document.title = "Communities — Crypto Space 77";
+    } else if (r.name === "welcome") {
+      document.title = "Crypto Space 77";
+    } else if (r.name === "imprint") {
+      document.title = "Imprint — Crypto Space 77";
+    }
+  }
+
   async function route() {
     closeLogoMenu();
     hideVoteSlider();
     clearError();
     const r = parseRoute();
+    if (r.name === "post") {
+      const jumpComments =
+        pendingCommentsScroll || (!HASH_ROUTING && location.hash === "#comments");
+      const anchor =
+        !jumpComments && !HASH_ROUTING && location.hash && location.hash.charAt(1) === "@"
+          ? location.hash
+          : "";
+      pendingCommentsScroll = false;
+      hidePublishOverlay();
+      await presentPost(r.author, r.permlink, { jumpComments, anchor });
+      return;
+    }
     const showWelcome = resolveWelcome(r);
     applyWelcome(showWelcome);
     if (isHomePath() && observer() && !showWelcome) {
@@ -7170,7 +7748,12 @@
       navigate(appHref("/"), true);
       return;
     }
-    if (r.name !== "post") currentPost = null;
+    const key = routeKey(r);
+    const sameView = Boolean(key && key === currentViewKey && view.innerHTML.trim());
+    if (postLayer.open) {
+      suspendPostLayer({ restoreScroll: sameView || r.name === "publish" });
+    }
+    currentPost = null;
     if (r.name !== "community") resetCommunityState();
     if (r.name !== "profile") resetProfileState();
     if (r.name !== "publish") {
@@ -7180,9 +7763,6 @@
       );
       document.body.classList.toggle("is-community", r.name === "community");
     }
-    const jumpComments =
-      r.name === "post" &&
-      (pendingCommentsScroll || (!HASH_ROUTING && location.hash === "#comments"));
     pendingCommentsScroll = false;
 
     if (r.name === "publish") {
@@ -7206,32 +7786,8 @@
     }
 
     hidePublishOverlay();
-    const key = routeKey(r);
-    if (key && key === currentViewKey && view.innerHTML.trim()) {
-      if (r.name === "feed") {
-        document.title = r.tag
-          ? "#" + r.tag + " — Crypto Space 77"
-          : r.sort === "feed"
-            ? "Feed — Crypto Space 77"
-            : "Crypto Space 77";
-      } else if (r.name === "post") {
-        requestAnimationFrame(() => {
-          if (jumpComments) scrollToComments();
-          else scrollToAnchor();
-        });
-      } else if (r.name === "profile") {
-        document.title = profilePageTitle(r.author, r.page);
-      } else if (r.name === "community") {
-        document.title = communityPageTitle(communityState.info, r.community, r.page);
-      } else if (r.name === "tags") {
-        document.title = "Tags — Crypto Space 77";
-      } else if (r.name === "communities") {
-        document.title = "Communities — Crypto Space 77";
-      } else if (r.name === "welcome") {
-        document.title = "Crypto Space 77";
-      } else if (r.name === "imprint") {
-        document.title = "Imprint — Crypto Space 77";
-      }
+    if (sameView) {
+      applyRouteTitle(r);
       return;
     }
 
@@ -7252,15 +7808,6 @@
       }
       await renderFeed(r.sort, true, r.tag || "");
       currentViewKey = key;
-      return;
-    }
-    if (r.name === "post") {
-      await renderPost(r.author, r.permlink);
-      currentViewKey = key;
-      requestAnimationFrame(() => {
-        if (jumpComments) scrollToComments();
-        else scrollToAnchor();
-      });
       return;
     }
     if (r.name === "profile") {
@@ -7305,18 +7852,36 @@
     currentViewKey = "notfound";
   }
 
+  function activeScroller() {
+    const layer = postLayerEl();
+    if (postLayer.open && layer && !layer.hidden) return layer;
+    return null;
+  }
+
+  function updateScrollTopBtn() {
+    const btn = document.getElementById("scrollTopBtn");
+    if (!btn) return;
+    const layer = activeScroller();
+    const top = layer ? layer.scrollTop : window.scrollY || window.pageYOffset || 0;
+    btn.classList.toggle("is-visible", top > 320);
+  }
+
+  function scrollActiveToTop() {
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const behavior = reduce.matches ? "auto" : "smooth";
+    const layer = activeScroller();
+    if (layer) layer.scrollTo({ top: 0, behavior });
+    else window.scrollTo({ top: 0, behavior });
+  }
+
   function bindScrollTop() {
     const btn = $("#scrollTopBtn");
     if (!btn) return;
-    const toggle = () => {
-      btn.classList.toggle("is-visible", window.scrollY > 320);
-    };
-    window.addEventListener("scroll", toggle, { passive: true });
-    btn.addEventListener("click", () => {
-      const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
-      window.scrollTo({ top: 0, behavior: reduce.matches ? "auto" : "smooth" });
-    });
-    toggle();
+    window.addEventListener("scroll", updateScrollTopBtn, { passive: true });
+    const layer = postLayerEl();
+    if (layer) layer.addEventListener("scroll", updateScrollTopBtn, { passive: true });
+    btn.addEventListener("click", scrollActiveToTop);
+    updateScrollTopBtn();
   }
 
   function bindLogoSpin() {
@@ -7376,6 +7941,7 @@
   }
 
   function boot() {
+    if ("scrollRestoration" in history) history.scrollRestoration = "manual";
     bindRootLinks();
     bindLogoSpin();
     bindLogoMenu();
@@ -7430,21 +7996,21 @@
           return;
         }
         const downBtn = e.target.closest(".downvote-btn");
-        if (downBtn && view.contains(downBtn)) {
+        if (downBtn && inInteractiveSurface(downBtn)) {
           e.preventDefault();
           e.stopPropagation();
           onDownvoteClick(downBtn);
           return;
         }
         const countBtn = e.target.closest(".vote-count-btn");
-        if (countBtn && view.contains(countBtn)) {
+        if (countBtn && inInteractiveSurface(countBtn)) {
           e.preventDefault();
           e.stopPropagation();
           onVoteCountClick(countBtn);
           return;
         }
         const btn = e.target.closest(".vote-btn");
-        if (btn && view.contains(btn)) {
+        if (btn && inInteractiveSurface(btn)) {
           e.preventDefault();
           e.stopPropagation();
           onVoteClick(btn);
@@ -7465,27 +8031,34 @@
       hideVoteSlider();
     });
 
-    view.addEventListener("click", (e) => {
+    document.addEventListener("click", (e) => {
+      if (!inInteractiveSurface(e.target)) return;
+      const postBack = e.target.closest(".post-back");
+      if (postBack) {
+        e.preventDefault();
+        history.back();
+        return;
+      }
       const removeTag = e.target.closest("[data-remove-tag]");
-      if (removeTag && view.contains(removeTag)) {
+      if (removeTag && inInteractiveSurface(removeTag)) {
         e.preventDefault();
         removeFavoriteTag(removeTag.getAttribute("data-remove-tag"));
         return;
       }
       const addTag = e.target.closest("[data-add-tag]");
-      if (addTag && view.contains(addTag)) {
+      if (addTag && inInteractiveSurface(addTag)) {
         e.preventDefault();
         addFavoriteTag(addTag.getAttribute("data-add-tag"));
         return;
       }
       const removeCommunity = e.target.closest("[data-remove-community]");
-      if (removeCommunity && view.contains(removeCommunity)) {
+      if (removeCommunity && inInteractiveSurface(removeCommunity)) {
         e.preventDefault();
         removeFavoriteCommunity(removeCommunity.getAttribute("data-remove-community"));
         return;
       }
       const toggleCommunity = e.target.closest("[data-toggle-community]");
-      if (toggleCommunity && view.contains(toggleCommunity)) {
+      if (toggleCommunity && inInteractiveSurface(toggleCommunity)) {
         e.preventDefault();
         toggleFavoriteCommunity(
           toggleCommunity.getAttribute("data-toggle-community"),
@@ -7494,56 +8067,56 @@
         return;
       }
       const subBtn = e.target.closest(".community-sub-btn");
-      if (subBtn && view.contains(subBtn)) {
+      if (subBtn && inInteractiveSurface(subBtn)) {
         e.preventDefault();
         toggleCommunitySubscription();
         return;
       }
       const followBtn = e.target.closest(".profile-follow-btn");
-      if (followBtn && view.contains(followBtn)) {
+      if (followBtn && inInteractiveSurface(followBtn)) {
         e.preventDefault();
         toggleProfileFollow();
         return;
       }
       const claimBtn = e.target.closest(".wallet-claim-btn");
-      if (claimBtn && view.contains(claimBtn)) {
+      if (claimBtn && inInteractiveSurface(claimBtn)) {
         e.preventDefault();
         claimProfileAwards();
         return;
       }
       const stakeBtn = e.target.closest(".wallet-stake-btn");
-      if (stakeBtn && view.contains(stakeBtn)) {
+      if (stakeBtn && inInteractiveSurface(stakeBtn)) {
         e.preventDefault();
         openWalletOverlay(stakeBtn.getAttribute("data-wallet-op") || "");
         return;
       }
       const postEditBtn = e.target.closest(".post-edit-btn");
-      if (postEditBtn && view.contains(postEditBtn)) {
+      if (postEditBtn && inInteractiveSurface(postEditBtn)) {
         e.preventDefault();
         openPostEditor();
         return;
       }
       const editBtn = e.target.closest(".comment-edit-btn");
-      if (editBtn && view.contains(editBtn)) {
+      if (editBtn && inInteractiveSurface(editBtn)) {
         e.preventDefault();
         toggleCommentEditor(editBtn);
         return;
       }
       const cancelBtn = e.target.closest(".composer-cancel");
-      if (cancelBtn && view.contains(cancelBtn)) {
+      if (cancelBtn && inInteractiveSurface(cancelBtn)) {
         e.preventDefault();
         const comment = cancelBtn.closest(".comment");
         if (comment) closeCommentEditor(comment);
         return;
       }
       const replyBtn = e.target.closest(".comment-reply-btn");
-      if (replyBtn && view.contains(replyBtn)) {
+      if (replyBtn && inInteractiveSurface(replyBtn)) {
         e.preventDefault();
         toggleReplyComposer(replyBtn);
         return;
       }
       const attachBtn = e.target.closest(".composer-attach");
-      if (attachBtn) {
+      if (attachBtn && inInteractiveSurface(attachBtn)) {
         e.preventDefault();
         const composer = attachBtn.closest(".comment-composer");
         const input = composer && composer.querySelector(".composer-file");
@@ -7551,15 +8124,15 @@
         return;
       }
       const submitBtn = e.target.closest(".composer-submit");
-      if (submitBtn) {
+      if (submitBtn && inInteractiveSurface(submitBtn)) {
         e.preventDefault();
         const composer = submitBtn.closest(".comment-composer");
         if (composer) submitComment(composer);
       }
     });
 
-    view.addEventListener("submit", (e) => {
-      if (!e.target) return;
+    document.addEventListener("submit", (e) => {
+      if (!e.target || !inInteractiveSurface(e.target)) return;
       if (e.target.id === "favTagsForm") {
         e.preventDefault();
         addFavoriteFromInput();
@@ -7571,48 +8144,48 @@
       }
     });
 
-    view.addEventListener("change", (e) => {
+    document.addEventListener("change", (e) => {
       const input = e.target.closest(".composer-file");
-      if (!input) return;
+      if (!input || !inInteractiveSurface(input)) return;
       const composer = input.closest(".comment-composer");
       const files = input.files ? Array.from(input.files) : [];
       input.value = "";
       if (composer && files.length) uploadImagesToComposer(composer, files);
     });
 
-    view.addEventListener("keydown", (e) => {
+    document.addEventListener("keydown", (e) => {
       if (!(e.ctrlKey || e.metaKey) || e.key !== "Enter") return;
       const composer = e.target.closest(".comment-composer");
-      if (!composer || !view.contains(composer)) return;
+      if (!composer || !inInteractiveSurface(composer)) return;
       e.preventDefault();
       submitComment(composer);
     });
 
-    view.addEventListener("dragenter", (e) => {
+    document.addEventListener("dragenter", (e) => {
       const composer = e.target.closest(".comment-composer");
-      if (!composer || !view.contains(composer) || !isFileDrag(e)) return;
+      if (!composer || !inInteractiveSurface(composer) || !isFileDrag(e)) return;
       e.preventDefault();
       composer.classList.add("is-dragover");
     });
 
-    view.addEventListener("dragover", (e) => {
+    document.addEventListener("dragover", (e) => {
       const composer = e.target.closest(".comment-composer");
-      if (!composer || !view.contains(composer) || !isFileDrag(e)) return;
+      if (!composer || !inInteractiveSurface(composer) || !isFileDrag(e)) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "copy";
       composer.classList.add("is-dragover");
     });
 
-    view.addEventListener("dragleave", (e) => {
-      const composer = e.target.closest(".comment-composer");
-      if (!composer) return;
+    document.addEventListener("dragleave", (e) => {
+      const composer = e.target.closest && e.target.closest(".comment-composer");
+      if (!composer || !inInteractiveSurface(composer)) return;
       if (e.relatedTarget && composer.contains(e.relatedTarget)) return;
       composer.classList.remove("is-dragover");
     });
 
-    view.addEventListener("drop", (e) => {
+    document.addEventListener("drop", (e) => {
       const composer = e.target.closest(".comment-composer");
-      if (!composer || !view.contains(composer)) return;
+      if (!composer || !inInteractiveSurface(composer)) return;
       e.preventDefault();
       composer.classList.remove("is-dragover");
       const files = imageFilesFrom(e.dataTransfer);
@@ -7620,9 +8193,9 @@
       else composerStatus(composer, "Drop an image file (png, jpg, gif, webp).", true);
     });
 
-    view.addEventListener("paste", (e) => {
+    document.addEventListener("paste", (e) => {
       const composer = e.target.closest(".comment-composer");
-      if (!composer || !view.contains(composer)) return;
+      if (!composer || !inInteractiveSurface(composer)) return;
       const clip = e.clipboardData;
       const files = clip && clip.files ? Array.from(clip.files).filter(isImageFile) : [];
       if (!files.length) return;
@@ -7638,7 +8211,7 @@
       }
       if (!hoverFine()) return;
       const hit = voteHitFrom(e.target);
-      if (!hit || !view.contains(hit)) return;
+      if (!hit || !inInteractiveSurface(hit)) return;
       const from = e.relatedTarget;
       if (from && hit.contains(from)) return;
       onVoteHitEnter(hit);
@@ -7659,7 +8232,10 @@
     });
 
     window.addEventListener("scroll", repositionOpenSlider, true);
-    window.addEventListener("resize", repositionOpenSlider);
+    window.addEventListener("resize", () => {
+      placePostLayer();
+      repositionOpenSlider();
+    });
 
     ChainQueue.subscribe((event) => {
       if (event && typeof event.size === "number") renderQueueStatus(event.size);

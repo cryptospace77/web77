@@ -142,6 +142,56 @@ a:hover {
   margin-right: auto;
 }
 
+.post-layer {
+  position: fixed;
+  z-index: 30;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg);
+  -webkit-overflow-scrolling: touch;
+}
+
+.post-layer-inner {
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 2rem 1.75rem 3rem;
+  min-width: 0;
+}
+
+.post-back-bar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  margin: 0 0 1.1rem;
+  padding: 0.2rem 0 0.55rem;
+  background: var(--bg);
+}
+
+.post-back-bar .back-link {
+  margin-bottom: 0;
+}
+
+button.back-link {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: var(--gray);
+}
+
+body.is-post-open .app,
+body.is-post-open .footer,
+body.is-post-open .welcome-flyer {
+  pointer-events: none;
+}
+
 .is-profile .app,
 .is-profile #view {
   max-width: none;
@@ -3958,6 +4008,10 @@ a.publish-fab:hover {
   }
 
   .app {
+    padding: 1.5rem 1.1rem 2.5rem;
+  }
+
+  .post-layer-inner {
     padding: 1.5rem 1.1rem 2.5rem;
   }
 
