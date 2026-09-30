@@ -909,6 +909,10 @@ html.has-mouse .session-account:focus-within .session-account-menu {
   text-decoration: none;
 }
 
+.session-notif[data-href] {
+  cursor: pointer;
+}
+
 .session-notif:hover {
   background: rgba(227, 19, 55, 0.12);
   text-shadow: none;

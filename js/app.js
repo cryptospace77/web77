@@ -2680,11 +2680,10 @@
     const kind = notificationKindLabel(item);
     const time = timeAgo(item.date);
     const meta = kind ? kind + (time ? " · " + time : "") : time;
-    const timeHtml = href
-      ? `<a class="session-notif-time" href="${HiveMd.escapeHtml(href)}">${HiveMd.escapeHtml(meta)}</a>`
-      : `<span class="session-notif-time">${HiveMd.escapeHtml(meta)}</span>`;
+    const timeHtml = `<span class="session-notif-time">${HiveMd.escapeHtml(meta)}</span>`;
+    const hrefAttr = href ? ` data-href="${HiveMd.escapeHtml(href)}"` : "";
     return (
-      `<div class="${cls}">` +
+      `<div class="${cls}"${hrefAttr}>` +
       avatar +
       `<span class="session-notif-body">` +
       `<span class="session-notif-msg">${notificationMessageHtml(item, actor, href)}</span>` +
@@ -2738,6 +2737,18 @@
       },
       { passive: true }
     );
+    wrap.addEventListener("click", (e) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+        return;
+      }
+      if (e.target.closest("a[href]")) return;
+      const row = e.target.closest(".session-notif");
+      if (!row || !wrap.contains(row)) return;
+      const href = row.getAttribute("data-href");
+      if (!href) return;
+      e.preventDefault();
+      navigate(href);
+    });
   }
 
   function prependNotifDom(items) {
