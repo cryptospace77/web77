@@ -3831,14 +3831,14 @@ a.publish-fab:hover {
   color: var(--yellow-dim);
 }
 
+.btn-social-gray {
+  color: var(--gray);
+}
+
 .btn-social-yellow:hover,
 .btn-social-gray:hover {
   color: var(--yellow);
   text-shadow: 0 0 10px rgba(255, 225, 74, 0.35);
-}
-
-.btn-social-gray {
-  color: var(--gray);
 }
 
 .footer-meta {
@@ -3850,10 +3850,6 @@ a.publish-fab:hover {
   font-size: 0.65rem;
   letter-spacing: 0.16em;
   color: var(--gray);
-}
-
-.footer .sep {
-  color: var(--red-dim);
 }
 
 .footer-link {
