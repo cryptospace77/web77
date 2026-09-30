@@ -7574,10 +7574,9 @@
       publishOverlay.addEventListener("click", (e) => {
         if (e.target === publishOverlay) {
           const active = document.activeElement;
-          if (active && publishOverlay.contains(active)) {
-            return;
+          if (!active || !publishOverlay.contains(active)) {
+            closePublish();
           }
-          closePublish();
           return;
         }
         if (e.target.closest("#publishCancel")) {
