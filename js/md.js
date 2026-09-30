@@ -789,18 +789,84 @@
     return html;
   }
 
+  function localAppPrefix() {
+    if (global.__CS77_HASH__) return "#/";
+    const base = global.__CS77_BASE__ || "/";
+    return base === "/" ? "/" : String(base).replace(/\/+$/, "") + "/";
+  }
+
   function localizeHiveLinks(html) {
-    let prefix = "/";
-    if (global.__CS77_HASH__) {
-      prefix = "#/";
-    } else {
-      const base = global.__CS77_BASE__ || "/";
-      prefix = base === "/" ? "/" : String(base).replace(/\/+$/, "") + "/";
-    }
-    return html.replace(
+    const prefix = localAppPrefix();
+    html = html.replace(
       /https?:\/\/(?:www\.)?(?:peakd\.com|hive\.blog|ecency\.com)\/(?:[^"'/\s]+\/)?@([a-z0-9.\-]+)\/([a-zA-Z0-9\-\._]+)/gi,
       prefix + "@$1/$2"
     );
+    return html.replace(
+      /https?:\/\/(?:www\.)?(?:peakd\.com|hive\.blog|ecency\.com)\/@([a-z0-9.\-]{3,16})\/?(?=[?#"'<\s]|$)/gi,
+      prefix + "@$1"
+    );
+  }
+
+  function isMentionBoundary(ch) {
+    if (!ch) return true;
+    return !/[a-zA-Z0-9@＠/]/.test(ch);
+  }
+
+  function mentionHtml(at, name) {
+    const user = String(name || "").toLowerCase();
+    return (
+      '<a class="mention" href="' +
+      escapeHtml(localAppPrefix() + "@" + user) +
+      '">' +
+      at +
+      escapeHtml(name) +
+      "</a>"
+    );
+  }
+
+  /** Turn bare @username mentions into profile links. Skip tags and existing links. */
+  function linkifyMentions(html) {
+    const s = String(html || "");
+    let out = "";
+    let i = 0;
+    while (i < s.length) {
+      if (s[i] === "<") {
+        const skipTag = s.slice(i).match(/^<(a|code|pre|script|style|textarea|kbd|samp)\b/i);
+        if (skipTag) {
+          const close = new RegExp("</" + skipTag[1] + "\\s*>", "i");
+          const rest = s.slice(i);
+          const m = rest.search(close);
+          if (m < 0) {
+            out += rest;
+            break;
+          }
+          const end = m + rest.slice(m).match(close)[0].length;
+          out += rest.slice(0, end);
+          i += end;
+          continue;
+        }
+        const gt = s.indexOf(">", i + 1);
+        if (gt < 0) {
+          out += s.slice(i);
+          break;
+        }
+        out += s.slice(i, gt + 1);
+        i = gt + 1;
+        continue;
+      }
+      const at = s[i];
+      if ((at === "@" || at === "＠") && isMentionBoundary(s[i - 1])) {
+        const m = s.slice(i + 1).match(/^([a-z][a-z0-9.\-]*[a-z0-9])/i);
+        if (m && m[1].length >= 3 && m[1].length <= 16) {
+          out += mentionHtml(at, m[1]);
+          i += 1 + m[1].length;
+          continue;
+        }
+      }
+      out += s[i];
+      i++;
+    }
+    return out;
   }
 
   let markedReady = false;
@@ -838,6 +904,7 @@
 
     html = embedMedia(html);
     html = localizeHiveLinks(html);
+    html = linkifyMentions(html);
 
     if (global.DOMPurify) {
       html = global.DOMPurify.sanitize(html, {
