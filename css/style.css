@@ -1438,7 +1438,8 @@ html.has-mouse .session-account:focus-within .session-account-menu {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 0.4rem 0 0.45rem;
+  touch-action: pan-y;
+  padding: 0 0 0.45rem;
   border: 1px solid var(--border-hot);
   border-radius: var(--radius);
   background: var(--bg-panel-opaque);
@@ -1448,13 +1449,18 @@ html.has-mouse .session-account:focus-within .session-account-menu {
 }
 
 .vote-voters-caption {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   font-family: var(--font-display);
   font-size: 0.58rem;
   font-weight: 700;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--gray);
-  padding: 0.15rem 0.75rem 0.35rem;
+  padding: 0.7rem 0.75rem 0.45rem;
+  background: var(--bg-panel-opaque);
+  box-shadow: 0 4px 0 var(--bg-panel-opaque);
 }
 
 .vote-voters-status,

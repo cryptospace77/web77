@@ -23,7 +23,8 @@
   };
   const VOTE_WEIGHT_KEY_LEGACY = "cs77_vote_weight";
   const HP_SLIDER_THRESHOLD = 500;
-  const VOTERS_SHOW = 80;
+  const VOTERS_PAGE = 40;
+  const VOTERS_SCROLL_PX = 72;
   const IMAGE_HOST = "https://images.hive.blog";
   const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
   const MAX_TAGS = 10;
@@ -920,7 +921,13 @@
     if (panel.getBoundingClientRect().left < 8) panel.style.left = "8px";
   }
 
-  function repositionOpenSlider() {
+  function repositionOpenSlider(e) {
+    if (e && e.type === "scroll" && votersPanelNode) {
+      const t = e.target;
+      if (t === votersPanelNode || (t && t.nodeType === 1 && votersPanelNode.contains(t))) {
+        return;
+      }
+    }
     if (openSlider && !openSlider.panel.hidden) {
       placeVoteSlider(openSlider.btn, openSlider.panel);
     }
@@ -958,6 +965,7 @@
   let votersShowTimer = 0;
   let votersHideTimer = 0;
   let votersPanelNode = null;
+  let votersTouching = false;
 
   function voteHitFrom(target) {
     return target && target.closest ? target.closest(".vote-hit") : null;
@@ -984,8 +992,48 @@
       document.body.appendChild(el);
       el.addEventListener("pointerenter", () => {
         window.clearTimeout(votersHideTimer);
+        votersHideTimer = 0;
       });
+      el.addEventListener("pointerdown", (e) => {
+        window.clearTimeout(votersHideTimer);
+        votersHideTimer = 0;
+        if (e.pointerType !== "mouse") votersTouching = true;
+      });
+      let touchUnlockTimer = 0;
+      const endVotersTouch = () => {
+        window.clearTimeout(touchUnlockTimer);
+        touchUnlockTimer = window.setTimeout(() => {
+          votersTouching = false;
+        }, 350);
+      };
+      el.addEventListener("pointerup", endVotersTouch);
+      el.addEventListener("pointercancel", endVotersTouch);
       el.addEventListener("pointerleave", scheduleHideVoters);
+      el.addEventListener(
+        "scroll",
+        () => {
+          maybeLoadMoreVoters();
+        },
+        { passive: true }
+      );
+      el.addEventListener(
+        "wheel",
+        (e) => {
+          if (e.deltaY > 0) maybeLoadMoreVoters();
+          const max = el.scrollHeight - el.clientHeight;
+          if (max <= 0) {
+            e.preventDefault();
+            return;
+          }
+          if (
+            (e.deltaY < 0 && el.scrollTop <= 0) ||
+            (e.deltaY > 0 && el.scrollTop >= max - 0.5)
+          ) {
+            e.preventDefault();
+          }
+        },
+        { passive: false }
+      );
     }
     votersPanelNode = el;
     return el;
@@ -995,29 +1043,34 @@
     if (!anchor || !panel || panel.hidden) return;
     const rect = anchor.getBoundingClientRect();
     if (rect.bottom < 0 || rect.top > window.innerHeight) {
+      if (votersTouching) return;
       hideVoteVoters();
       return;
     }
+    const scrollTop = panel.scrollTop;
     panel.style.position = "fixed";
     panel.style.zIndex = "70";
     panel.style.right = "auto";
-    panel.style.maxHeight = "";
+    const spaceBelow = window.innerHeight - rect.bottom - 12;
+    const spaceAbove = rect.top - 12;
+    const contentH = panel.scrollHeight;
+    const placeAbove = contentH > spaceBelow && spaceAbove > spaceBelow;
+    const maxH = Math.max(80, Math.round(placeAbove ? spaceAbove : spaceBelow));
+    panel.style.maxHeight = maxH + "px";
     panel.style.left = Math.round(rect.left) + "px";
-    panel.style.top = Math.round(rect.bottom + 8) + "px";
+    if (placeAbove) {
+      panel.style.top =
+        Math.max(8, Math.round(rect.top - Math.min(contentH, maxH) - 8)) + "px";
+    } else {
+      panel.style.top = Math.round(rect.bottom + 8) + "px";
+    }
     const box = panel.getBoundingClientRect();
     const maxRight = window.innerWidth - 8;
     if (box.right > maxRight) {
       panel.style.left = Math.max(8, Math.round(maxRight - box.width)) + "px";
     }
-    const spaceBelow = window.innerHeight - rect.bottom - 12;
-    const spaceAbove = rect.top - 12;
-    if (box.height > spaceBelow && spaceAbove > spaceBelow) {
-      const h = Math.max(80, Math.round(spaceAbove));
-      panel.style.maxHeight = h + "px";
-      panel.style.top = Math.max(8, Math.round(rect.top - Math.min(box.height, h) - 8)) + "px";
-    } else {
-      panel.style.maxHeight = Math.max(80, Math.round(spaceBelow)) + "px";
-    }
+    if (panel.getBoundingClientRect().left < 8) panel.style.left = "8px";
+    if (panel.scrollTop !== scrollTop) panel.scrollTop = scrollTop;
   }
 
   function hideVoteVoters() {
@@ -1026,6 +1079,7 @@
     votersShowTimer = 0;
     votersHideTimer = 0;
     votersGen += 1;
+    votersTouching = false;
     openVoters = null;
     const panel = votersPanelNode || document.getElementById("voteVotersPanel");
     if (!panel) return;
@@ -1037,7 +1091,10 @@
     panel.style.maxHeight = "";
   }
 
-  function scheduleHideVoters() {
+  function scheduleHideVoters(e) {
+    if (votersTouching) return;
+    if (e && e.pointerType && e.pointerType !== "mouse") return;
+    if (!hoverFine()) return;
     window.clearTimeout(votersShowTimer);
     window.clearTimeout(votersHideTimer);
     votersShowTimer = 0;
@@ -1107,6 +1164,80 @@
     ];
   }
 
+  function voteVoterRowHtml(v, totalPayout, totalRshares) {
+    const name = String((v && v.voter) || "").replace(/^@/, "").toLowerCase();
+    if (!name) return "";
+    const href = HiveMd.escapeHtml(appHref("/@" + name));
+    const safe = HiveMd.escapeHtml(name);
+    const pendingRow = Boolean(v && v.pending);
+    const pay = pendingRow
+      ? "…"
+      : HiveMd.escapeHtml(formatHiveAmount(votePayoutValue(v, totalPayout, totalRshares)));
+    return `<li><a class="vote-voter" href="${href}"><span class="vote-voter-name">@${safe}</span><span class="vote-voter-payout${
+      pendingRow ? " is-pending" : ""
+    }">${pay}</span></a></li>`;
+  }
+
+  function votersHasMore() {
+    return Boolean(
+      openVoters &&
+        Array.isArray(openVoters.list) &&
+        openVoters.shown < openVoters.list.length
+    );
+  }
+
+  function syncVotersFooter(panel) {
+    if (!panel) return;
+    let more = panel.querySelector(".vote-voters-more");
+    if (!votersHasMore()) {
+      if (more) more.remove();
+      return;
+    }
+    const left = openVoters.list.length - openVoters.shown;
+    const html = `and ${left} more`;
+    if (more) {
+      more.textContent = html;
+      return;
+    }
+    panel.insertAdjacentHTML("beforeend", `<p class="vote-voters-more">${html}</p>`);
+  }
+
+  function appendVoterRows(n) {
+    const panel = votersPanelNode;
+    if (!panel || !openVoters || !Array.isArray(openVoters.list)) return 0;
+    const ul = panel.querySelector(".vote-voters-list");
+    if (!ul) return 0;
+    const start = openVoters.shown || 0;
+    const end = Math.min(openVoters.list.length, start + Math.max(1, n || VOTERS_PAGE));
+    if (end <= start) return 0;
+    let html = "";
+    for (let i = start; i < end; i++) {
+      html += voteVoterRowHtml(openVoters.list[i], openVoters.totalPayout, openVoters.totalRshares);
+    }
+    ul.insertAdjacentHTML("beforeend", html);
+    openVoters.shown = end;
+    syncVotersFooter(panel);
+    return end - start;
+  }
+
+  function votersNearBottom(panel) {
+    if (!panel) return false;
+    return panel.scrollTop + panel.clientHeight >= panel.scrollHeight - VOTERS_SCROLL_PX;
+  }
+
+  function maybeLoadMoreVoters() {
+    const panel = votersPanelNode;
+    if (!panel || panel.hidden || !votersHasMore()) return;
+    if (panel.clientHeight < 8) return;
+    let guard = 0;
+    while (votersHasMore() && guard++ < 40) {
+      const overflow = panel.scrollHeight > panel.clientHeight + VOTERS_SCROLL_PX;
+      if (overflow && !votersNearBottom(panel)) break;
+      const added = appendVoterRows(VOTERS_PAGE);
+      if (!added) break;
+    }
+  }
+
   function renderVoteVoters(panel, votes, dir, author, permlink) {
     const want = dir === "down" ? -1 : 1;
     const caption = dir === "down" ? "Downvotes" : "Upvotes";
@@ -1117,32 +1248,29 @@
     let list = (Array.isArray(votes) ? votes : []).filter((v) => votePolarity(v) === want);
     list.sort((a, b) => Math.abs(voteRshares(b)) - Math.abs(voteRshares(a)));
     list = mergeLocalVoter(list, author, permlink, dir);
+    const keepShown =
+      openVoters &&
+      openVoters.author === author &&
+      openVoters.permlink === permlink &&
+      openVoters.dir === dir &&
+      openVoters.shown
+        ? openVoters.shown
+        : 0;
+    if (openVoters) {
+      openVoters.list = list;
+      openVoters.totalPayout = totalPayout;
+      openVoters.totalRshares = totalRshares;
+      openVoters.shown = 0;
+    }
     if (!list.length) {
       panel.innerHTML = `<p class="vote-voters-caption">${caption}</p><p class="vote-voters-status">${
         dir === "down" ? "No downvotes yet." : "No upvotes yet."
       }</p>`;
       return;
     }
-    const extra = list.length > VOTERS_SHOW ? list.length - VOTERS_SHOW : 0;
-    const rows = list
-      .slice(0, VOTERS_SHOW)
-      .map((v) => {
-        const name = String((v && v.voter) || "").replace(/^@/, "").toLowerCase();
-        if (!name) return "";
-        const href = HiveMd.escapeHtml(appHref("/@" + name));
-        const safe = HiveMd.escapeHtml(name);
-        const pendingRow = Boolean(v && v.pending);
-        const pay = pendingRow
-          ? "…"
-          : HiveMd.escapeHtml(formatHiveAmount(votePayoutValue(v, totalPayout, totalRshares)));
-        return `<li><a class="vote-voter" href="${href}"><span class="vote-voter-name">@${safe}</span><span class="vote-voter-payout${
-          pendingRow ? " is-pending" : ""
-        }">${pay}</span></a></li>`;
-      })
-      .filter(Boolean)
-      .join("");
-    const more = extra ? `<p class="vote-voters-more">and ${extra} more</p>` : "";
-    panel.innerHTML = `<p class="vote-voters-caption">${caption}</p><ul class="vote-voters-list">${rows}</ul>${more}`;
+    panel.innerHTML = `<p class="vote-voters-caption">${caption}</p><ul class="vote-voters-list"></ul>`;
+    appendVoterRows(Math.max(VOTERS_PAGE, keepShown));
+    maybeLoadMoreVoters();
   }
 
   function showVoteVoters(el, force) {
@@ -7527,7 +7655,7 @@
       if (to && hit.contains(to)) return;
       const panel = votersPanelNode;
       if (to && panel && panel.contains(to)) return;
-      scheduleHideVoters();
+      scheduleHideVoters(e);
     });
 
     window.addEventListener("scroll", repositionOpenSlider, true);
