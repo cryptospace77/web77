@@ -3330,6 +3330,16 @@ button.tag-suggest:hover {
   text-overflow: ellipsis;
 }
 
+.wallet-tx-memo {
+  display: block;
+  margin-top: 0.28rem;
+  font-family: var(--font-body);
+  font-size: 0.92rem;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .wallet-tx-side {
   flex-shrink: 0;
   text-align: right;
@@ -3348,6 +3358,36 @@ button.tag-suggest:hover {
   font-family: var(--font-mono);
   font-size: 0.72rem;
   color: var(--gray);
+}
+
+a.wallet-tx-time {
+  color: var(--gray);
+}
+
+a.wallet-tx-time:hover {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
+.wallet-tx-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  padding: 1.1rem 0.5rem 0.25rem;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--yellow);
+  letter-spacing: 0.08em;
+}
+
+.wallet-tx-status .btn-loader {
+  width: 28px;
+  height: 28px;
+}
+
+.wallet-page .feed-actions {
+  margin-top: 1.35rem;
 }
 
 .wallet-amount-row {

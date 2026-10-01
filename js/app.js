@@ -42,6 +42,7 @@
   const NOTIF_LIMIT = 100;
   const NOTIF_SCROLL_PX = 72;
   const NOTIF_POLL_MS = 60000;
+  const ACCOUNT_STATE_FRESH_MS = 60000;
 
   const $ = (sel) => document.querySelector(sel);
   const view = $("#view");
@@ -66,6 +67,7 @@
   let lastNonPublishPath = "/";
   let publishNavPushed = false;
   let currentViewKey = "";
+  let initialPageLoad = true;
   let welcomeHold = false;
   let currentPost = null;
   const postLayer = {
@@ -104,6 +106,7 @@
     pending: false,
     claimPending: false,
     wallet: null,
+    walletTx: null,
   };
   const walletOpState = {
     kind: "",
@@ -2651,6 +2654,7 @@
     rc: null,
     social: null,
     loaded: false,
+    loadedAt: 0,
   };
 
   function resetAccountState() {
@@ -2666,6 +2670,7 @@
     accountState.rc = null;
     accountState.social = null;
     accountState.loaded = false;
+    accountState.loadedAt = 0;
   }
 
   function readStoredProfileImage(user) {
@@ -2728,6 +2733,11 @@
     return Boolean(
       name && accountState.loaded && accountState.user === name && accountState.account
     );
+  }
+
+  function accountStateFresh(name) {
+    if (!ownAccountReady(name) || !accountState.props || !accountState.loadedAt) return false;
+    return Date.now() - accountState.loadedAt < ACCOUNT_STATE_FRESH_MS;
   }
 
   function accountReputation(user) {
@@ -2840,6 +2850,7 @@
     accountState.rc = info.rc;
     if (!sameUser) accountState.social = null;
     accountState.loaded = true;
+    accountState.loadedAt = Date.now();
     writeStoredProfileImage(user, profileImage);
     const hp = hivePowerFromAccount(account, accountState.props);
     if (hp != null && observer() === user) {
@@ -2861,6 +2872,7 @@
     accountState.rc = null;
     accountState.social = null;
     accountState.loaded = false;
+    accountState.loadedAt = 0;
     paintAccountResources();
   }
 
@@ -6634,6 +6646,7 @@
     profileState.pending = false;
     profileState.claimPending = false;
     profileState.wallet = null;
+    profileState.walletTx = null;
   }
 
   function profileFollowed(profile) {
@@ -7016,6 +7029,7 @@
     return "Hive Keychain is needed to stake or unstake.";
   }
 
+  // Keep these names aligned with WALLET_HISTORY_OP_IDS in api.js.
   const WALLET_TX_TYPES = {
     transfer: "transfer",
     transfer_to_vesting: "staked hive",
@@ -7096,27 +7110,149 @@
     return "";
   }
 
-  async function loadWalletHistory(account) {
-    const wanted = 30;
-    const out = [];
-    let start = -1;
-    for (let i = 0; i < 10 && out.length < wanted; i++) {
-      const batch = await HiveApi.getAccountHistory(account, start, 100);
-      if (!batch.length) break;
-      for (let j = batch.length - 1; j >= 0; j--) {
-        const rec = batch[j];
-        const op = rec && rec[1] && rec[1].op;
-        const type = Array.isArray(op) ? String(op[0] || "") : "";
-        if (WALLET_TX_TYPES[type]) out.push(rec);
-        if (out.length >= wanted) break;
-      }
-      const first = batch[0];
-      const firstIdx = Array.isArray(first) ? Number(first[0]) : NaN;
-      if (!Number.isFinite(firstIdx) || firstIdx <= 0) break;
-      if (batch.length < 100) break;
-      start = firstIdx - 1;
+  function walletTxMemo(type, payload) {
+    if (
+      type !== "transfer" &&
+      type !== "transfer_to_savings" &&
+      type !== "transfer_from_savings" &&
+      type !== "fill_transfer_from_savings"
+    ) {
+      return "";
     }
-    return out;
+    return String((payload && payload.memo) || "").trim();
+  }
+
+  function walletTxUrl(rec) {
+    const id = String((rec && rec.trx_id) || "")
+      .trim()
+      .toLowerCase();
+    if (!/^[0-9a-f]{40}$/.test(id) || /^0+$/.test(id)) return "";
+    return "https://hivescan.info/tx/" + id;
+  }
+
+  const WALLET_TX_PAGE = 30;
+
+  function blankWalletTx() {
+    return {
+      items: [],
+      cursor: -1,
+      done: false,
+      loading: false,
+      started: false,
+      error: "",
+      seen: new Set(),
+      pageGoal: WALLET_TX_PAGE,
+    };
+  }
+
+  function historyRowIndex(rec) {
+    const idx = Array.isArray(rec) ? Number(rec[0]) : NaN;
+    return Number.isFinite(idx) ? idx : NaN;
+  }
+
+  function consumeWalletHistoryBatch(tx, batch) {
+    if (!batch.length) {
+      tx.done = true;
+      return;
+    }
+    let oldest = NaN;
+    for (let i = 0; i < batch.length; i++) {
+      const idx = historyRowIndex(batch[i]);
+      if (!Number.isFinite(idx)) continue;
+      if (!Number.isFinite(oldest) || idx < oldest) oldest = idx;
+    }
+    let stopAt = NaN;
+    for (let j = batch.length - 1; j >= 0; j--) {
+      const rec = batch[j];
+      const idx = historyRowIndex(rec);
+      if (!Number.isFinite(idx) || tx.seen.has(idx)) continue;
+      tx.seen.add(idx);
+      const op = rec[1] && rec[1].op;
+      const type = Array.isArray(op) ? String(op[0] || "") : "";
+      if (WALLET_TX_TYPES[type]) tx.items.push(rec);
+      if (tx.items.length >= tx.pageGoal) {
+        stopAt = idx;
+        break;
+      }
+    }
+    const reachedOldest = Number.isFinite(stopAt) && stopAt === oldest;
+    if (Number.isFinite(stopAt)) {
+      if (stopAt <= 0 || (reachedOldest && batch.length < WALLET_TX_PAGE)) {
+        tx.done = true;
+      } else {
+        tx.cursor = stopAt - 1;
+      }
+      return;
+    }
+    if (!Number.isFinite(oldest) || oldest <= 0 || batch.length < WALLET_TX_PAGE) {
+      tx.done = true;
+      return;
+    }
+    tx.cursor = oldest - 1;
+  }
+
+  async function appendWalletHistory(account, tx) {
+    if (tx.done || profileState.walletTx !== tx) return;
+    tx.pageGoal = tx.items.length + WALLET_TX_PAGE;
+    const batch = await HiveApi.getWalletHistory(account, tx.cursor, WALLET_TX_PAGE);
+    if (profileState.walletTx !== tx) return;
+    consumeWalletHistoryBatch(tx, batch);
+  }
+
+  function walletHistoryHtml(tx, props) {
+    const state = tx || blankWalletTx();
+    const rows = (state.items || []).map((row) => walletTxHtml(row, props)).filter(Boolean);
+    let body = "";
+    if (rows.length) {
+      body = `<div class="wallet-tx-list">${rows.join("")}</div>`;
+    } else if (state.started && !state.loading && state.error) {
+      body = `<div class="panel empty-state"><h2>Transactions unavailable</h2><p>${HiveMd.escapeHtml(state.error)}</p></div>`;
+    } else if (state.started && !state.loading && state.done) {
+      body = `<div class="panel empty-state"><h2>No recent transactions</h2><p>Wallet activity for this account will show up here.</p></div>`;
+    }
+    const note =
+      rows.length && state.error && !state.loading
+        ? `<p class="wallet-note">${HiveMd.escapeHtml(state.error)}</p>`
+        : "";
+    const loading =
+      !state.started || state.loading
+        ? `<div class="wallet-tx-status"><span class="btn-loader" aria-hidden="true"></span> Loading…</div>`
+        : "";
+    const more =
+      state.started && !state.done && !state.loading
+        ? `<div class="feed-actions"><button type="button" class="btn-primary" id="walletMoreBtn">Load more</button></div>`
+        : "";
+    return body + note + loading + more;
+  }
+
+  function paintWalletHistory() {
+    const el = $("#walletTxBody");
+    if (!el) return;
+    const props = profileState.wallet && profileState.wallet.props;
+    el.innerHTML = walletHistoryHtml(profileState.walletTx, props);
+  }
+
+  async function loadMoreWalletHistory() {
+    const tx = profileState.walletTx;
+    const name = profileState.author;
+    const tab = profileState.page;
+    if (!tx || tx.loading || tx.done || !name) return;
+    tx.loading = true;
+    tx.error = "";
+    paintWalletHistory();
+    try {
+      await appendWalletHistory(name, tx);
+    } catch (err) {
+      if (profileState.walletTx !== tx) return;
+      tx.error = (err && err.message) || String(err);
+    } finally {
+      if (profileState.walletTx === tx) {
+        tx.loading = false;
+        tx.started = true;
+      }
+    }
+    if (profileState.walletTx !== tx || !profileRouteStill(name, tab)) return;
+    paintWalletHistory();
   }
 
   function walletTxHtml(entry, props) {
@@ -7129,15 +7265,23 @@
     const payload = op[1] || {};
     const amount = walletTxAmounts(type, payload, props);
     const detail = walletTxDetail(type, payload);
+    const memo = walletTxMemo(type, payload);
     const when = rec.timestamp ? timeAgo(rec.timestamp) : "";
+    const txUrl = walletTxUrl(rec);
+    const timeHtml = when
+      ? txUrl
+        ? `<a class="wallet-tx-time" href="${HiveMd.escapeHtml(txUrl)}" target="_blank" rel="noopener noreferrer">${HiveMd.escapeHtml(when)}</a>`
+        : `<span class="wallet-tx-time">${HiveMd.escapeHtml(when)}</span>`
+      : "";
     return `<div class="wallet-tx">
       <div class="wallet-tx-main">
         <span class="wallet-tx-type">${HiveMd.escapeHtml(WALLET_TX_TYPES[type])}</span>
         ${detail ? `<span class="wallet-tx-detail">${HiveMd.escapeHtml(detail)}</span>` : ""}
+        ${memo ? `<span class="wallet-tx-memo">${HiveMd.escapeHtml(memo)}</span>` : ""}
       </div>
       <div class="wallet-tx-side">
         ${amount ? `<span class="wallet-tx-amount">${HiveMd.escapeHtml(amount)}</span>` : ""}
-        ${when ? `<span class="wallet-tx-time">${HiveMd.escapeHtml(when)}</span>` : ""}
+        ${timeHtml}
       </div>
     </div>`;
   }
@@ -7209,10 +7353,9 @@
     return `<p class="wallet-note">Powering down ${formatHiveLike(left, "hive")} remaining.</p>`;
   }
 
-  function walletPageHtml(wallet, history, own) {
+  function walletPageHtml(wallet, own) {
     const w = wallet || {};
     const props = w.props;
-    const txs = (history || []).map((row) => walletTxHtml(row, props)).filter(Boolean);
     const hiveActions = own ? walletStakeButtons("hive") : "";
     const hbdActions = own ? walletStakeButtons("hbd") : "";
     return `
@@ -7243,11 +7386,7 @@
         </section>
         <section class="wallet-section">
           <h2>Transactions</h2>
-          ${
-            txs.length
-              ? `<div class="wallet-tx-list">${txs.join("")}</div>`
-              : `<div class="panel empty-state"><h2>No recent transactions</h2><p>Wallet activity for this account will show up here.</p></div>`
-          }
+          <div id="walletTxBody">${walletHistoryHtml(profileState.walletTx, props)}</div>
         </section>
       </div>
     `;
@@ -7663,11 +7802,26 @@
     else view.insertAdjacentHTML("beforeend", html);
   }
 
-  async function fillProfileWallet(name, tab) {
+  // A page load reuses a fresh account snapshot, or waits for the boot load.
+  // Opening the wallet later refreshes that snapshot before balances paint.
+  async function resolveWalletBalances(name, pageLoad) {
+    if (isOwnAuthor(name)) {
+      if (pageLoad) {
+        if (!accountStateFresh(name)) await loadAccountResources();
+      } else {
+        await loadAccountResources();
+      }
+      if (accountStateFresh(name)) {
+        return HiveApi.walletFromAccount(accountState.account, accountState.props);
+      }
+    }
+    return HiveApi.getWallet(name);
+  }
+
+  async function fillProfileWallet(name, tab, pageLoad) {
     let wallet = null;
-    let history = [];
     try {
-      wallet = await HiveApi.getWallet(name);
+      wallet = await resolveWalletBalances(name, pageLoad);
     } catch (err) {
       if (!profileRouteStill(name, tab)) return;
       showError(err.message || String(err));
@@ -7679,17 +7833,14 @@
       );
       return;
     }
-    try {
-      history = await loadWalletHistory(name);
-    } catch {
-      history = [];
-    }
-    if (!profileRouteStill(name, tab)) return;
     profileState.wallet = wallet;
-    profileSectionHtml(walletPageHtml(wallet, history, isOwnAuthor(name)));
+    profileState.walletTx = blankWalletTx();
+    profileSectionHtml(walletPageHtml(wallet, isOwnAuthor(name)));
+    await loadMoreWalletHistory();
   }
 
   async function renderProfile(author, page) {
+    const pageLoad = initialPageLoad;
     const name = String(author || "")
       .replace(/^@/, "")
       .toLowerCase();
@@ -7729,6 +7880,7 @@
       profileState.pending = false;
       profileState.claimPending = false;
       profileState.wallet = null;
+      profileState.walletTx = null;
       document.title = profilePageTitle(name, tab);
       const chrome = profileBannerHtml(name, profile, power) + profileNavHtml(name, tab);
       if (!profileRouteStill(name, tab)) return;
@@ -7746,7 +7898,7 @@
       }
 
       if (tab === "wallet") {
-        await fillProfileWallet(name, tab);
+        await fillProfileWallet(name, tab, pageLoad);
         return;
       }
       const status = $("#profileSectionStatus");
@@ -8642,6 +8794,12 @@
         toggleProfileFollow();
         return;
       }
+      const moreWallet = e.target.closest("#walletMoreBtn");
+      if (moreWallet && inInteractiveSurface(moreWallet)) {
+        e.preventDefault();
+        loadMoreWalletHistory();
+        return;
+      }
       const claimBtn = e.target.closest(".wallet-claim-btn");
       if (claimBtn && inInteractiveSurface(claimBtn)) {
         e.preventDefault();
@@ -8955,7 +9113,11 @@
       hydratePublishDraftFromStorage();
       refreshHivePower();
       renderQueueStatus(ChainQueue.size());
-      route();
+      try {
+        route();
+      } finally {
+        initialPageLoad = false;
+      }
     }
 
     if (window.HiveAuth && typeof HiveAuth.ready === "function") {

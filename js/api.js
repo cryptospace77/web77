@@ -159,6 +159,14 @@
     }
   }
 
+  // JSON.stringify cannot carry a uint64. Wallet history sets bit 63.
+  function rpcBody(value) {
+    return JSON.stringify(value, function (_key, item) {
+      if (typeof item === "bigint") return "UINT64:" + item.toString();
+      return item;
+    }).replace(/"UINT64:(-?\d+)"/g, "$1");
+  }
+
   async function hiveRpcOnce(node, method, params, timeoutMs) {
     const timeout = Math.max(1000, timeoutMs || RPC_TIMEOUT_MS);
     const controller = new AbortController();
@@ -169,7 +177,7 @@
       const res = await fetch(node, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: rpcBody(payload),
         signal: controller.signal,
         mode: "cors",
         cache: "no-store",
@@ -743,18 +751,10 @@
     return vestsToHive(vests, props);
   }
 
-  async function getWallet(username) {
-    const name = String(username || "")
-      .trim()
-      .replace(/^@/, "")
-      .toLowerCase();
-    if (!name) return null;
-    const [accounts, props] = await Promise.all([
-      getAccounts([name]),
-      getDynamicGlobalProperties(),
-    ]);
-    const account = accounts && accounts[0];
+  function walletFromAccount(account, props) {
     if (!account || !props) return null;
+    const name = accountName(account.name);
+    if (!name) return null;
     const vestingShares = parseAsset(account.vesting_shares);
     const delegatedVests = parseAsset(account.delegated_vesting_shares);
     const receivedVests = parseAsset(account.received_vesting_shares);
@@ -791,6 +791,18 @@
     };
   }
 
+  async function getWallet(username) {
+    const name = accountName(username);
+    if (!name) return null;
+    const [accounts, props] = await Promise.all([
+      getAccounts([name]),
+      getDynamicGlobalProperties(),
+    ]);
+    const account = accounts && accounts[0];
+    if (!account || !props) return null;
+    return walletFromAccount(account, props);
+  }
+
   async function getAccountHistory(account, start, limit) {
     const name = String(account || "")
       .trim()
@@ -801,6 +813,136 @@
     const lim = Math.min(Math.max(limit || 100, 1), 1000);
     const result = await hiveRpc("condenser_api.get_account_history", [name, from, lim]);
     return Array.isArray(result) ? result : [];
+  }
+
+  // Bit index is the operation's place in hive/protocol/operations.hpp.
+  // Same set as WALLET_TX_TYPES in app.js. author_reward and curation_reward stay out.
+  const WALLET_HISTORY_OP_IDS = [
+    2, // transfer
+    3, // transfer_to_vesting
+    4, // withdraw_vesting
+    32, // transfer_to_savings
+    33, // transfer_from_savings
+    39, // claim_reward_balance
+    40, // delegate_vesting_shares
+    55, // interest
+    56, // fill_vesting_withdraw
+    59, // fill_transfer_from_savings
+    63, // comment_benefactor_reward
+  ];
+
+  const ASSET_NAI = {
+    "@@000000013": "HBD",
+    "@@000000021": "HIVE",
+    "@@000000037": "VESTS",
+  };
+
+  function walletHistoryMask() {
+    let low = 0n;
+    let high = 0n;
+    for (let i = 0; i < WALLET_HISTORY_OP_IDS.length; i++) {
+      const id = WALLET_HISTORY_OP_IDS[i];
+      if (id < 64) low |= 1n << BigInt(id);
+      else high |= 1n << BigInt(id - 64);
+    }
+    return { low: low, high: high };
+  }
+
+  function legacyAsset(val) {
+    if (!val || typeof val !== "object" || typeof val.nai !== "string" || val.amount == null) return null;
+    const sym = ASSET_NAI[val.nai];
+    if (!sym) return null;
+    const precision = Number(val.precision);
+    const places = Number.isFinite(precision) && precision >= 0 ? precision : 3;
+    const raw = String(val.amount);
+    const neg = raw.charAt(0) === "-";
+    const digits = neg ? raw.slice(1) : raw;
+    if (!/^\d+$/.test(digits)) return null;
+    const padded = places > 0 ? digits.padStart(places + 1, "0") : digits;
+    const whole = places > 0 ? padded.slice(0, -places) : padded;
+    const frac = places > 0 ? padded.slice(-places) : "";
+    return (neg ? "-" : "") + whole + (frac ? "." + frac : "") + " " + sym;
+  }
+
+  function legacyValue(value) {
+    if (Array.isArray(value)) return value.map(legacyValue);
+    const asset = legacyAsset(value);
+    if (asset) return asset;
+    if (!value || typeof value !== "object") return value;
+    const out = {};
+    const keys = Object.keys(value);
+    for (let i = 0; i < keys.length; i++) out[keys[i]] = legacyValue(value[keys[i]]);
+    return out;
+  }
+
+  function normalizeHistoryEntry(row) {
+    if (!Array.isArray(row) || !row[1] || typeof row[1] !== "object") return null;
+    const rec = row[1];
+    const op = rec.op;
+    let type = "";
+    let payload = {};
+    if (Array.isArray(op)) {
+      type = String(op[0] || "");
+      payload = op[1] && typeof op[1] === "object" ? op[1] : {};
+    } else if (op && typeof op.type === "string") {
+      type = op.type.replace(/_operation$/, "");
+      payload = op.value && typeof op.value === "object" ? op.value : {};
+    } else {
+      return null;
+    }
+    const idx = Number(row[0]);
+    if (!Number.isFinite(idx)) return null;
+    return [
+      idx,
+      {
+        trx_id: rec.trx_id || "",
+        block: rec.block,
+        trx_in_block: rec.trx_in_block,
+        op_in_trx: rec.op_in_trx,
+        virtual_op: rec.virtual_op,
+        timestamp: rec.timestamp || "",
+        op: [type, legacyValue(payload)],
+      },
+    ];
+  }
+
+  function historyRows(result) {
+    let rows = [];
+    if (Array.isArray(result)) rows = result;
+    else if (result && Array.isArray(result.history)) rows = result.history;
+    else if (result && result.history && typeof result.history === "object") {
+      rows = Object.keys(result.history).map(function (key) {
+        return [Number(key), result.history[key]];
+      });
+    }
+    const out = [];
+    for (let i = 0; i < rows.length; i++) {
+      const entry = normalizeHistoryEntry(rows[i]);
+      if (entry) out.push(entry);
+    }
+    out.sort(function (a, b) {
+      return a[0] - b[0];
+    });
+    return out;
+  }
+
+  async function getWalletHistory(account, start, limit) {
+    const name = String(account || "")
+      .trim()
+      .replace(/^@/, "")
+      .toLowerCase();
+    if (!name) return [];
+    const from = start == null ? -1 : start;
+    const lim = Math.min(Math.max(limit || 100, 1), 1000);
+    const mask = walletHistoryMask();
+    const result = await hiveRpc("account_history_api.get_account_history", {
+      account: name,
+      start: from,
+      limit: lim,
+      operation_filter_low: mask.low,
+      operation_filter_high: mask.high,
+    });
+    return historyRows(result);
   }
 
   async function getSavingsWithdrawFrom(account) {
@@ -843,8 +985,10 @@
     rsharesToHbd,
     getAccountResources,
     getHivePower,
+    walletFromAccount,
     getWallet,
     getAccountHistory,
+    getWalletHistory,
     getSavingsWithdrawFrom,
     parseAsset,
     vestsToHive,
