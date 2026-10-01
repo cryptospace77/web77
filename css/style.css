@@ -3515,6 +3515,12 @@ a.publish-fab:hover {
   opacity: 0.85;
 }
 
+.publish-card.is-editing-comment .publish-title-input,
+.publish-card.is-editing-comment .publish-tags-head,
+.publish-card.is-editing-comment .publish-tags {
+  display: none !important;
+}
+
 .publish-card .publish-title-input {
   width: 100%;
   padding: 0.8rem 0.95rem;

@@ -2009,14 +2009,19 @@
       .slice(0, 10);
   }
 
-  function tagsForEdit(post) {
+  function metadataTags(post) {
     const meta = HiveMd.parseJsonMetadata(post && post.json_metadata);
     let tags = meta.tags;
     if (typeof tags === "string") tags = tags.split(/[\s,]+/);
     if (!Array.isArray(tags)) tags = [];
-    tags = tags
+    return tags
       .map((t) => String(t).replace(/^#/, "").trim().toLowerCase())
-      .filter((t, i, arr) => t && arr.indexOf(t) === i);
+      .filter((t, i, arr) => t && arr.indexOf(t) === i)
+      .slice(0, MAX_TAGS);
+  }
+
+  function tagsForEdit(post) {
+    const tags = metadataTags(post);
     const parent = String((post && (post.parent_permlink || post.category)) || "")
       .replace(/^#/, "")
       .trim()
@@ -3593,16 +3598,42 @@
     el.classList.toggle("is-error", Boolean(isError));
   }
 
+  function editingComment() {
+    return Boolean(publishEdit && publishEdit.comment);
+  }
+
   function paintPublishChrome() {
     const editing = Boolean(publishEdit);
+    const comment = editingComment();
     const h2 = $("#publishPage h2");
     const submit = $("#publishSubmit");
     const dest = $("#publishDest");
     const pageEl = $("#publishPage");
-    if (h2) h2.textContent = editing ? "Edit post" : "New post";
+    const title = $("#publishTitle");
+    const body = $("#publishBody");
+    const tagsHead = document.querySelector("#publishPage .publish-tags-head");
+    const tagsWrap = $("#publishTagsWrap");
+    if (h2) h2.textContent = comment ? "Edit comment" : editing ? "Edit post" : "New post";
     if (submit) submit.textContent = editing ? "Save" : "Publish";
     if (dest) dest.hidden = editing;
-    if (pageEl) pageEl.classList.toggle("is-editing", editing);
+    if (title) title.hidden = comment;
+    if (tagsHead) tagsHead.hidden = comment;
+    if (tagsWrap) tagsWrap.hidden = comment;
+    if (body) body.placeholder = comment ? "Write your comment…" : "Write your post…";
+    if (pageEl) {
+      pageEl.classList.toggle("is-editing", editing);
+      pageEl.classList.toggle("is-editing-comment", comment);
+    }
+  }
+
+  function focusPublishField() {
+    const comment = editingComment();
+    const field = comment ? $("#publishBody") : $("#publishTitle");
+    if (!field) return;
+    field.focus();
+    if (!comment || typeof field.setSelectionRange !== "function") return;
+    const n = field.value.length;
+    field.setSelectionRange(n, n);
   }
 
   function snapshotPublishForm() {
@@ -3997,7 +4028,7 @@
     if (!preview) return;
     const title = (($("#publishTitle") && $("#publishTitle").value) || "").trim();
     const body = ($("#publishBody") && $("#publishBody").value) || "";
-    const heading = title ? `<h1>${HiveMd.escapeHtml(title)}</h1>` : "";
+    const heading = !editingComment() && title ? `<h1>${HiveMd.escapeHtml(title)}</h1>` : "";
     const html = body.trim()
       ? HiveMd.renderMarkdown(body)
       : `<p class="feed-hint">Start writing to see a preview.</p>`;
@@ -4097,8 +4128,7 @@
     updatePublishPreview();
     loadPublishSubs();
     startPublishDraftAutosave();
-    const title = $("#publishTitle");
-    if (title) title.focus();
+    focusPublishField();
   }
 
   async function submitPublish() {
@@ -4116,15 +4146,18 @@
       return;
     }
     if (pageEl && pageEl.classList.contains("is-pending")) return;
-    const title = (($("#publishTitle") && $("#publishTitle").value) || "").trim();
+    const commentEdit = editingComment();
+    const title = commentEdit
+      ? String((publishEdit && publishEdit.title) || "").trim()
+      : (($("#publishTitle") && $("#publishTitle").value) || "").trim();
     const body = (($("#publishBody") && $("#publishBody").value) || "").trim();
-    takeTagsFromInput();
-    if (!title) {
+    if (!commentEdit) takeTagsFromInput();
+    if (!commentEdit && !title) {
       setPublishStatus("Add a title.", true);
       return;
     }
     if (!body) {
-      setPublishStatus("Write the post body.", true);
+      setPublishStatus(commentEdit ? "Write the comment." : "Write the post body.", true);
       return;
     }
     if (!hasSigner(user)) {
@@ -4134,11 +4167,14 @@
 
     const editing = Boolean(publishEdit);
     if (editing && !isOwnAuthor(publishEdit.author)) {
-      setPublishStatus("You can only edit your own posts.", true);
+      setPublishStatus(
+        commentEdit ? "You can only edit your own comments." : "You can only edit your own posts.",
+        true
+      );
       return;
     }
 
-    let tags = publishTags.slice();
+    let tags = commentEdit ? (publishEdit.tags || []).slice() : publishTags.slice();
     let parentAuthor = "";
     let parentPermlink;
     let permlink;
@@ -4146,11 +4182,11 @@
       parentAuthor = publishEdit.parentAuthor || "";
       parentPermlink = publishEdit.parentPermlink;
       permlink = publishEdit.permlink;
-      if (parentPermlink && tags.indexOf(parentPermlink) === -1) {
+      if (!commentEdit && parentPermlink && tags.indexOf(parentPermlink) === -1) {
         tags.unshift(parentPermlink);
         tags = tags.slice(0, MAX_TAGS);
       }
-      if (!parentAuthor && !tags.length) {
+      if (!commentEdit && !parentAuthor && !tags.length) {
         setPublishStatus("Add at least one tag for your blog post.", true);
         return;
       }
@@ -4290,17 +4326,21 @@
       publishStash = snapshotPublishForm();
       stopPublishDraftAutosave();
     }
+    const comment = !isRootPost(post);
     publishEdit = {
       author: post.author,
       permlink: post.permlink,
       parentAuthor: post.parent_author || "",
       parentPermlink: post.parent_permlink || post.category || "",
       jsonMetadata: post.json_metadata,
+      comment,
+      title: post.title || "",
+      tags: comment ? metadataTags(post) : null,
     };
     applyPublishForm({
       title: post.title || "",
       body: post.body || "",
-      tags: tagsForEdit(post),
+      tags: comment ? publishEdit.tags.slice() : tagsForEdit(post),
       dest: publishDest,
       tagInput: "",
     });
@@ -4308,8 +4348,7 @@
     setPublishFabHidden(true);
     pendingPublish = false;
     ov.hidden = false;
-    const titleEl = $("#publishTitle");
-    if (titleEl) titleEl.focus();
+    focusPublishField();
   }
 
   /* ─── Feed ─── */
