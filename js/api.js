@@ -647,23 +647,39 @@
     return Array.isArray(list) && list.length ? list[0] : null;
   }
 
+  async function getAccountReputation(username) {
+    const name = accountName(username);
+    if (!name) return null;
+    // get_accounts leaves reputation at 0. This returns accounts from the
+    // lower bound, so the row has to be the requested account.
+    const result = await hiveRpc("condenser_api.get_account_reputations", [name, 1]);
+    const row = Array.isArray(result) ? result[0] : null;
+    if (!row || accountName(row.account) !== name) return null;
+    if (row.reputation == null || row.reputation === "") return null;
+    return row.reputation;
+  }
+
   async function getAccountResources(username) {
     const name = accountName(username);
     if (!name) return null;
     const now = Math.floor(Date.now() / 1000);
-    const [accounts, props, fund, price, rcAccount] = await Promise.all([
+    const [accounts, props, fund, price, rcAccount, reputation] = await Promise.all([
       getAccounts([name]),
       getDynamicGlobalProperties(),
       getRewardFund(),
       getMedianHistoryPrice(),
       findRcAccount(name).catch(() => null),
+      getAccountReputation(name).catch(() => null),
     ]);
     const account = accounts && accounts[0];
     if (!account || !props) return null;
+    if (reputation != null) account.reputation = reputation;
     // A full upvote. HF28 prices rshares from vesting shares, not leftover mana.
     const rshares = estimateVoteRshares(account, props, 10000);
     const rcMax = rcAccount ? intBig(rcAccount.max_rc) : 0n;
     return {
+      account,
+      props,
       votingMana: manabarPercent(account.voting_manabar, effectiveVestMicros(account), now),
       voteValue: rsharesToHbd(rshares, fund, price),
       rc: rcAccount ? manabarPercent(rcAccount.rc_manabar, rcMax, now) : null,

@@ -32,6 +32,8 @@
   const MAX_FAVORITE_TAGS = 40;
   const FAVORITE_COMMUNITIES_KEY = "cs77_favorite_communities";
   const WELCOME_SEEN_KEY = "cs77_welcome_seen";
+  const PROFILE_IMAGE_KEY = "cs77_profile_image";
+  const SESSION_AVATAR_FALLBACK = "/assets/satoshi-small.png";
   const MAX_FAVORITE_COMMUNITIES = 40;
   const PUBLISH_DRAFT_KEY = "cs77_publish_draft";
   const PUBLISH_DRAFT_SAVE_MS = 2000;
@@ -1420,12 +1422,20 @@
     if (hivePowerUser === user && hivePower != null) return;
     hivePowerUser = user;
     try {
+      if (!ownAccountReady(user)) await loadAccountResources();
+      if (observer() !== user) return;
+      if (ownAccountReady(user)) {
+        const hp = hivePowerFromAccount(accountState.account, accountState.props);
+        hivePower = hp == null ? 0 : hp;
+        setNodeLabel();
+        return;
+      }
       hivePower = await HiveApi.getHivePower(user);
       setNodeLabel();
     } catch {
+      if (observer() !== user) return;
       hivePower = 0;
     }
-    if (observer() !== user) return;
   }
 
   function renderQueueStatus(size) {
@@ -2628,23 +2638,135 @@
   }
 
   let resourceGen = 0;
-  const resourceState = {
+  let accountLoad = null;
+  // Logged-in Hive account from condenser_api.get_accounts, plus mana and RC.
+  const accountState = {
     user: "",
-    mana: "",
-    vote: "",
-    rc: "",
-    manaLow: false,
-    rcLow: false,
+    account: null,
+    metadata: null,
+    profileImage: "",
+    props: null,
+    votingMana: null,
+    voteValue: null,
+    rc: null,
+    social: null,
+    loaded: false,
   };
 
-  function resetResources() {
+  function resetAccountState() {
     resourceGen += 1;
-    resourceState.user = "";
-    resourceState.mana = "";
-    resourceState.vote = "";
-    resourceState.rc = "";
-    resourceState.manaLow = false;
-    resourceState.rcLow = false;
+    accountLoad = null;
+    accountState.user = "";
+    accountState.account = null;
+    accountState.metadata = null;
+    accountState.profileImage = "";
+    accountState.props = null;
+    accountState.votingMana = null;
+    accountState.voteValue = null;
+    accountState.rc = null;
+    accountState.social = null;
+    accountState.loaded = false;
+  }
+
+  function readStoredProfileImage(user) {
+    try {
+      const raw = localStorage.getItem(PROFILE_IMAGE_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      if (!data || typeof data !== "object") return null;
+      if (String(data.user || "") !== user) return null;
+      if (!Object.prototype.hasOwnProperty.call(data, "image")) return null;
+      return String(data.image || "");
+    } catch {
+      return null;
+    }
+  }
+
+  function writeStoredProfileImage(user, image) {
+    try {
+      localStorage.setItem(
+        PROFILE_IMAGE_KEY,
+        JSON.stringify({ user, image: String(image || "") })
+      );
+    } catch {
+      /* ignore quota / private mode */
+    }
+  }
+
+  function metadataFromAccount(account) {
+    const posting = HiveMd.parseJsonMetadata(account && account.posting_json_metadata);
+    const legacy = HiveMd.parseJsonMetadata(account && account.json_metadata);
+    const postingProfile =
+      posting && typeof posting.profile === "object" && posting.profile ? posting.profile : {};
+    const legacyProfile =
+      legacy && typeof legacy.profile === "object" && legacy.profile ? legacy.profile : {};
+    return Object.assign({}, legacy, posting, {
+      profile: Object.assign({}, legacyProfile, postingProfile),
+    });
+  }
+
+  function profileImageFromMetadata(metadata) {
+    const profile = metadata && metadata.profile;
+    return String((profile && profile.profile_image) || "").trim();
+  }
+
+  function knownProfileImage(user) {
+    if (accountState.loaded && accountState.user === user) {
+      return accountState.profileImage || "";
+    }
+    return readStoredProfileImage(user);
+  }
+
+  function sessionAvatarSrc(user) {
+    const image = knownProfileImage(user);
+    if (image == null) return HiveMd.avatarUrl(user, "small");
+    if (!String(image).trim()) return SESSION_AVATAR_FALLBACK;
+    return HiveMd.avatarUrl(user, "small");
+  }
+
+  function ownAccountReady(name) {
+    return Boolean(
+      name && accountState.loaded && accountState.user === name && accountState.account
+    );
+  }
+
+  function accountReputation(user) {
+    if (!ownAccountReady(user)) return 0;
+    const raw = accountState.account.reputation;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n === 0) return 0;
+    return raw;
+  }
+
+  function hivePowerFromAccount(account, props) {
+    if (!account || !props) return null;
+    const vests =
+      HiveApi.parseAsset(account.vesting_shares) +
+      HiveApi.parseAsset(account.received_vesting_shares) -
+      HiveApi.parseAsset(account.delegated_vesting_shares);
+    return HiveApi.vestsToHive(Math.max(0, vests), props);
+  }
+
+  function profileFromAccountState() {
+    const account = accountState.account;
+    if (!account) return null;
+    const metadata = accountState.metadata || metadataFromAccount(account);
+    const social = accountState.social;
+    return {
+      name: account.name,
+      created: account.created,
+      post_count: account.post_count,
+      reputation: account.reputation,
+      metadata,
+      profile_image: accountState.profileImage || "",
+      stats: {
+        post_count: Number(account.post_count) || 0,
+        followers: social ? Number(social.followers) || 0 : 0,
+        following: social ? Number(social.following) || 0 : 0,
+      },
+      context: social ? { followed: Boolean(social.followed) } : {},
+      statsPending: !social,
+    };
   }
 
   function roundedResourcePercent(value) {
@@ -2661,7 +2783,16 @@
     return Math.abs(n).toFixed(2);
   }
 
+  function paintSessionAvatar() {
+    const user = observer();
+    const img = document.querySelector("#sessionMenu .session-avatar-btn img");
+    if (!img || !user) return;
+    const src = sessionAvatarSrc(user);
+    if (img.getAttribute("src") !== src) img.setAttribute("src", src);
+  }
+
   function paintAccountResources() {
+    paintSessionAvatar();
     const el = $("#sessionAccountStats");
     if (!el) return;
     const mana = el.querySelector("[data-stat='mana']");
@@ -2670,7 +2801,7 @@
     if (!mana || !vote || !rc) return;
     const manaStat = mana.closest(".session-stat");
     const rcStat = rc.closest(".session-stat");
-    const ready = resourceState.user === observer() && resourceState.mana;
+    const ready = accountState.loaded && accountState.user === observer() && accountState.account;
     if (!ready) {
       mana.textContent = "…";
       vote.textContent = "…";
@@ -2680,40 +2811,86 @@
       el.classList.add("is-loading");
       return;
     }
-    mana.textContent = resourceState.mana;
-    vote.textContent = resourceState.vote;
-    rc.textContent = resourceState.rc;
-    if (manaStat) manaStat.classList.toggle("is-low", resourceState.manaLow);
-    if (rcStat) rcStat.classList.toggle("is-low", resourceState.rcLow);
+    mana.textContent = formatResourcePercent(accountState.votingMana);
+    vote.textContent = formatResourceAmount(accountState.voteValue);
+    rc.textContent = accountState.rc == null ? "—" : formatResourcePercent(accountState.rc);
+    if (manaStat) manaStat.classList.toggle("is-low", roundedResourcePercent(accountState.votingMana) <= 20);
+    if (rcStat) {
+      rcStat.classList.toggle(
+        "is-low",
+        accountState.rc != null && roundedResourcePercent(accountState.rc) <= 20
+      );
+    }
     el.classList.remove("is-loading");
+  }
+
+  function assignAccountState(user, info) {
+    const account = info && info.account;
+    if (!account) return;
+    const metadata = metadataFromAccount(account);
+    const profileImage = profileImageFromMetadata(metadata);
+    const sameUser = accountState.user === user;
+    accountState.user = user;
+    accountState.account = account;
+    accountState.metadata = metadata;
+    accountState.profileImage = profileImage;
+    accountState.props = info.props || null;
+    accountState.votingMana = info.votingMana;
+    accountState.voteValue = info.voteValue;
+    accountState.rc = info.rc;
+    if (!sameUser) accountState.social = null;
+    accountState.loaded = true;
+    writeStoredProfileImage(user, profileImage);
+    const hp = hivePowerFromAccount(account, accountState.props);
+    if (hp != null && observer() === user) {
+      hivePower = hp;
+      hivePowerUser = user;
+    }
+    paintAccountResources();
+    syncOwnProfileBanner();
+  }
+
+  function clearAccountForUser(user) {
+    accountState.user = user;
+    accountState.account = null;
+    accountState.metadata = null;
+    accountState.profileImage = "";
+    accountState.props = null;
+    accountState.votingMana = null;
+    accountState.voteValue = null;
+    accountState.rc = null;
+    accountState.social = null;
+    accountState.loaded = false;
+    paintAccountResources();
   }
 
   async function loadAccountResources() {
     const user = observer();
-    if (!user) return;
+    if (!user) return null;
+    if (accountLoad && accountLoad.user === user) return accountLoad.promise;
     const gen = ++resourceGen;
-    if (resourceState.user !== user) {
-      resourceState.user = user;
-      resourceState.mana = "";
-      resourceState.vote = "";
-      resourceState.rc = "";
-      resourceState.manaLow = false;
-      resourceState.rcLow = false;
-      paintAccountResources();
-    }
-    try {
-      const info = await HiveApi.getAccountResources(user);
-      if (gen !== resourceGen || observer() !== user || !info) return;
-      resourceState.user = user;
-      resourceState.mana = formatResourcePercent(info.votingMana);
-      resourceState.vote = formatResourceAmount(info.voteValue);
-      resourceState.rc = info.rc == null ? "—" : formatResourcePercent(info.rc);
-      resourceState.manaLow = roundedResourcePercent(info.votingMana) <= 20;
-      resourceState.rcLow = info.rc != null && roundedResourcePercent(info.rc) <= 20;
-      paintAccountResources();
-    } catch {
-      /* keep the last line; the menu still shows notifications */
-    }
+    if (accountState.user !== user) clearAccountForUser(user);
+    let resolveLoad;
+    const promise = new Promise((resolve) => {
+      resolveLoad = resolve;
+    });
+    accountLoad = { user, gen, promise };
+    (async () => {
+      try {
+        const info = await HiveApi.getAccountResources(user);
+        if (gen !== resourceGen || observer() !== user || !info || !info.account) {
+          resolveLoad(null);
+          return;
+        }
+        assignAccountState(user, info);
+        resolveLoad(accountState);
+      } catch {
+        resolveLoad(null);
+      } finally {
+        if (accountLoad && accountLoad.gen === gen) accountLoad = null;
+      }
+    })();
+    return promise;
   }
 
   function stopNotifPoll() {
@@ -3229,7 +3406,7 @@
     hidePublishOverlay({ persist: false });
     stopNotifPoll();
     resetNotifs();
-    resetResources();
+    resetAccountState();
     renderSession();
     currentViewKey = "";
     if (parseRoute().name === "publish") navigate(appHref("/"), true);
@@ -3321,7 +3498,7 @@
           <div class="session-chip">
             <button type="button" class="session-avatar-btn" aria-haspopup="true" aria-expanded="false" aria-controls="sessionDropdown" aria-label="Notifications">
               <span class="session-avatar-wrap">
-                <img src="${HiveMd.avatarUrl(user, "small")}" alt="" width="22" height="22">
+                <img src="${sessionAvatarSrc(user)}" alt="" width="22" height="22">
                 <span class="session-badge" id="sessionBadge" hidden></span>
               </span>
             </button>
@@ -3370,7 +3547,7 @@
     } else {
       stopNotifPoll();
       resetNotifs();
-      resetResources();
+      resetAccountState();
       sessionSlot.innerHTML = `<button type="button" class="btn-login" id="loginBtn">Login</button>`;
       $("#loginBtn").addEventListener("click", openLogin);
     }
@@ -5616,12 +5793,13 @@
 
     try {
       await promise;
+      if (!accountReputation(user)) await loadAccountResources();
       const html = renderComment({
         author: user,
         permlink,
         body,
         created: new Date().toISOString(),
-        author_reputation: 0,
+        author_reputation: accountReputation(user),
         payout: 0,
         json_metadata: JSON.stringify(jsonMetadata),
         parent_author: parentAuthor,
@@ -6557,15 +6735,18 @@
   function profileBannerHtml(author, profile, hivePower) {
     const meta =
       (profile && (profile.metadata || profile.posting_json_metadata)) || {};
-      const profileImage = (meta?.profile?.profile_image || profile?.profile_image || "");
-      const avatarSrc = (profileImage?HiveMd.avatarUrl(author, "large")
-: "/assets/satoshi.png");
+    const info = meta && typeof meta.profile === "object" && meta.profile ? meta.profile : {};
+    const profileImage = String(
+      (info && info.profile_image) || (profile && profile.profile_image) || ""
+    ).trim();
+    const avatarSrc = profileImage ? HiveMd.avatarUrl(author, "large") : "/assets/satoshi.png";
     const about = String(
-      (meta.profile && meta.profile.about) || (profile && profile.about) || ""
+      (info && info.about) || (profile && profile.about) || ""
     ).trim();
     const display =
-      (meta.profile && meta.profile.name) || (profile && profile.name) || author;
+      (info && info.name) || (profile && profile.name) || author;
     const stats = (profile && profile.stats) || {};
+    const statsPending = Boolean(profile && profile.statsPending);
     const posts = Number((profile && profile.post_count) || stats.post_count || 0);
     const followers = Number(stats.followers || 0);
     const following = Number(stats.following || 0);
@@ -6586,13 +6767,13 @@
           <img class="avatar" src="${avatarSrc}" alt="">
           <div>
             <h1>${HiveMd.escapeHtml(display)}</h1>
-            <p class="profile-handle"><a href="${href}">@${HiveMd.escapeHtml(author)}</a> · ${rep}</p>
+            <p class="profile-handle"><a href="${href}">@${HiveMd.escapeHtml(author)}</a> · <span class="profile-rep">${rep}</span></p>
             ${about ? `<p class="profile-about">${HiveMd.escapeHtml(about)}</p>` : ""}
             ${profileDetailsHtml(profile)}
             <div class="profile-stats">
-              <span>${posts} posts</span>
-              <span class="profile-follower-count">${followers} followers</span>
-              <span>${following} following</span>
+              <span class="profile-post-count">${posts} posts</span>
+              <span class="profile-follower-count">${statsPending ? "…" : followers + " followers"}</span>
+              <span class="profile-following-count">${statsPending ? "…" : following + " following"}</span>
               ${hp ? `<span class="profile-hp">${HiveMd.escapeHtml(hp)}</span>` : ""}
               ${profileJoinedHtml(profile && profile.created)}
             </div>
@@ -6611,11 +6792,84 @@
       btn.setAttribute("data-followed", profileState.followed ? "1" : "0");
       btn.classList.toggle("is-joined", profileState.followed);
     }
+    const profile = profileState.profile;
+    const stats = profile && profile.stats;
+    if (!profile || !stats || profile.statsPending) return;
     const count = view.querySelector(".profile-follower-count");
-    const stats = profileState.profile && profileState.profile.stats;
-    if (count && stats) {
-      count.textContent = Number(stats.followers || 0) + " followers";
+    if (count) count.textContent = Number(stats.followers || 0) + " followers";
+    const following = view.querySelector(".profile-following-count");
+    if (following) following.textContent = Number(stats.following || 0) + " following";
+  }
+
+  function applyOwnProfileSocial(bridge) {
+    if (!bridge || !accountState.loaded || accountState.user !== profileState.author) return;
+    const stats = bridge.stats || {};
+    accountState.social = {
+      followers: Number(stats.followers) || 0,
+      following: Number(stats.following) || 0,
+      followed: profileFollowed(bridge),
+    };
+    const profile = profileState.profile;
+    if (!profile) return;
+    if (!profile.stats) profile.stats = {};
+    profile.stats.followers = accountState.social.followers;
+    profile.stats.following = accountState.social.following;
+    profile.statsPending = false;
+    if (!profile.context) profile.context = {};
+    profile.context.followed = accountState.social.followed;
+    // get_accounts reputation is 0. Prefer the raw score already stored on
+    // the account; otherwise use the display score from the profile API.
+    const raw = accountState.account && accountState.account.reputation;
+    const rawNumber = Number(raw);
+    if ((!Number.isFinite(rawNumber) || rawNumber === 0) && bridge.reputation != null && bridge.reputation !== "") {
+      if (accountState.account) accountState.account.reputation = bridge.reputation;
+      profile.reputation = bridge.reputation;
     }
+    paintProfileChrome();
+    paintProfileRep();
+  }
+
+  function syncOwnProfileBanner() {
+    if (!accountState.loaded || profileState.author !== accountState.user) return;
+    const profile = profileState.profile;
+    const account = accountState.account;
+    if (!profile || !account) return;
+    const metadata = accountState.metadata || metadataFromAccount(account);
+    profile.metadata = metadata;
+    profile.profile_image = accountState.profileImage || "";
+    profile.reputation = account.reputation;
+    profile.created = account.created;
+    profile.post_count = account.post_count;
+    if (profile.stats) profile.stats.post_count = Number(account.post_count) || 0;
+    const banner = view.querySelector(".profile-banner");
+    if (!banner) return;
+    const img = banner.querySelector(".profile-head .avatar");
+    if (img) {
+      const src = accountState.profileImage
+        ? HiveMd.avatarUrl(accountState.user, "large")
+        : "/assets/satoshi.png";
+      if (img.getAttribute("src") !== src) img.setAttribute("src", src);
+    }
+    const info = metadata && metadata.profile;
+    const display = (info && info.name) || account.name || accountState.user;
+    const heading = banner.querySelector("h1");
+    if (heading && display) heading.textContent = display;
+    const about = String((info && info.about) || "").trim();
+    const aboutEl = banner.querySelector(".profile-about");
+    if (aboutEl) aboutEl.textContent = about;
+    const postsEl = banner.querySelector(".profile-post-count");
+    if (postsEl) postsEl.textContent = (Number(account.post_count) || 0) + " posts";
+    const hpText = formatProfileHp(hivePowerFromAccount(account, accountState.props));
+    const hpEl = banner.querySelector(".profile-hp");
+    if (hpEl && hpText) hpEl.textContent = hpText;
+    paintProfileRep();
+  }
+
+  function paintProfileRep() {
+    const el = view.querySelector(".profile-banner .profile-rep");
+    const profile = profileState.profile;
+    if (!el || !profile) return;
+    el.textContent = String(Math.floor(HiveMd.displayReputation(profile.reputation || 0)));
   }
 
   function profileCardHtml(post) {
@@ -7363,6 +7617,7 @@
     }
 
     async function fill() {
+      if (!profileRouteStill(author, sort)) return;
       hideVoteSlider();
       moreBtn.hidden = true;
       status.hidden = false;
@@ -7370,8 +7625,10 @@
         await loadPage();
         clearError();
       } catch (err) {
+        if (!profileRouteStill(author, sort)) return;
         showError(err.message || String(err));
       }
+      if (!profileRouteStill(author, sort)) return;
       paintFeedCards(list, profileCardHtml);
       if (!feedState.items.length && feedState.done) {
         status.hidden = true;
@@ -7390,17 +7647,79 @@
     await fill();
   }
 
+  function profileRouteStill(name, tab) {
+    const r = parseRoute();
+    if (!r || r.name !== "profile") return false;
+    const author = String(r.author || "")
+      .replace(/^@/, "")
+      .toLowerCase();
+    const page = normalizeProfilePage(r.page) || "posts";
+    return author === name && page === tab;
+  }
+
+  function profileSectionHtml(html) {
+    const status = $("#profileSectionStatus");
+    if (status) status.outerHTML = html;
+    else view.insertAdjacentHTML("beforeend", html);
+  }
+
+  async function fillProfileWallet(name, tab) {
+    let wallet = null;
+    let history = [];
+    try {
+      wallet = await HiveApi.getWallet(name);
+    } catch (err) {
+      if (!profileRouteStill(name, tab)) return;
+      showError(err.message || String(err));
+    }
+    if (!profileRouteStill(name, tab)) return;
+    if (!wallet) {
+      profileSectionHtml(
+        `<div class="wallet-page"><div class="panel empty-state"><h2>Wallet unavailable</h2><p>Could not load balances for this account.</p></div></div>`
+      );
+      return;
+    }
+    try {
+      history = await loadWalletHistory(name);
+    } catch {
+      history = [];
+    }
+    if (!profileRouteStill(name, tab)) return;
+    profileState.wallet = wallet;
+    profileSectionHtml(walletPageHtml(wallet, history, isOwnAuthor(name)));
+  }
+
   async function renderProfile(author, page) {
     const name = String(author || "")
       .replace(/^@/, "")
       .toLowerCase();
     const tab = normalizeProfilePage(page) || "posts";
-    view.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading @${HiveMd.escapeHtml(name)}…</div>`;
+    const own = isOwnAuthor(name);
+    if (!(own && ownAccountReady(name))) {
+      view.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading @${HiveMd.escapeHtml(name)}…</div>`;
+    }
     try {
-      const [profile, hivePower] = await Promise.all([
-        HiveApi.getProfile(name, observer()).catch(() => null),
-        HiveApi.getHivePower(name).catch(() => null),
-      ]);
+      let profile = null;
+      let power = null;
+      if (own) {
+        if (!ownAccountReady(name)) {
+          await loadAccountResources();
+          if (!profileRouteStill(name, tab)) return;
+        }
+        if (ownAccountReady(name)) {
+          profile = profileFromAccountState();
+          power = hivePowerFromAccount(accountState.account, accountState.props);
+        }
+      }
+      if (!profile) {
+        const [bridge, hp] = await Promise.all([
+          HiveApi.getProfile(name, observer()).catch(() => null),
+          HiveApi.getHivePower(name).catch(() => null),
+        ]);
+        if (!profileRouteStill(name, tab)) return;
+        profile = bridge;
+        power = hp;
+      }
       setNodeLabel();
       clearError();
       profileState.author = name;
@@ -7411,35 +7730,31 @@
       profileState.claimPending = false;
       profileState.wallet = null;
       document.title = profilePageTitle(name, tab);
-      const chrome = profileBannerHtml(name, profile, hivePower) + profileNavHtml(name, tab);
+      const chrome = profileBannerHtml(name, profile, power) + profileNavHtml(name, tab);
+      if (!profileRouteStill(name, tab)) return;
+      view.innerHTML =
+        chrome +
+        `<div class="loading-row" id="profileSectionStatus"><span class="btn-loader" aria-hidden="true"></span> Loading…</div>`;
 
-      if (tab === "wallet") {
-        let wallet = null;
-        let history = [];
-        try {
-          wallet = await HiveApi.getWallet(name);
-        } catch (err) {
-          showError(err.message || String(err));
-        }
-        if (!wallet) {
-          view.innerHTML =
-            chrome +
-            `<div class="wallet-page"><div class="panel empty-state"><h2>Wallet unavailable</h2><p>Could not load balances for this account.</p></div></div>`;
-          return;
-        }
-        try {
-          history = await loadWalletHistory(name);
-        } catch {
-          history = [];
-        }
-        profileState.wallet = wallet;
-        view.innerHTML = chrome + walletPageHtml(wallet, history, isOwnAuthor(name));
-        return;
+      if (own && accountState.user === name && accountState.account) {
+        HiveApi.getProfile(name, observer())
+          .then((bridge) => {
+            if (!profileRouteStill(name, tab) || profileState.author !== name) return;
+            applyOwnProfileSocial(bridge);
+          })
+          .catch(() => {});
       }
 
-      view.innerHTML = chrome;
+      if (tab === "wallet") {
+        await fillProfileWallet(name, tab);
+        return;
+      }
+      const status = $("#profileSectionStatus");
+      if (status && profileRouteStill(name, tab)) status.remove();
+      if (!profileRouteStill(name, tab)) return;
       await renderProfileFeed(name, tab);
     } catch (err) {
+      if (!profileRouteStill(name, tab)) return;
       resetProfileState();
       showError(err.message || String(err));
       view.innerHTML = notFoundHtml("Could not load this account.");
