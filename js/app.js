@@ -76,6 +76,7 @@
     hadWelcome: false,
   };
   const postSnaps = new Map();
+  const cardContentStamps = new Map();
   const POST_SNAP_MAX = 6;
   const communityState = {
     name: "",
@@ -4526,7 +4527,7 @@
       } catch (err) {
         showError(err.message || String(err));
       }
-      list.innerHTML = feedState.items.map(cardHtml).join("");
+      paintFeedCards(list, cardHtml);
       if (!feedState.items.length && feedState.done) {
         status.hidden = true;
         const personal = isPersonalFeed();
@@ -5728,9 +5729,30 @@
     return `<p class="feed-hint post-comments-error">${HiveMd.escapeHtml(msg || "Couldn't load comments.")}</p>`;
   }
 
+  function countThreadedReplies(node) {
+    const replies = node && node._replies;
+    if (!Array.isArray(replies) || !replies.length) return 0;
+    let n = 0;
+    for (let i = 0; i < replies.length; i++) n += 1 + countThreadedReplies(replies[i]);
+    return n;
+  }
+
   function discussionCommentCount(discussion, root) {
+    // Replies under the opened post. A comment opened from a profile feed is
+    // depth 1 in its own discussion, so a depth check would count it.
+    if (root && Array.isArray(root._replies)) return countThreadedReplies(root);
     if (discussion && typeof discussion === "object") {
-      return Object.values(discussion).filter((node) => node && Number(node.depth) > 0).length;
+      const self =
+        root && root.author
+          ? String(root.author).toLowerCase() + "/" + String(root.permlink).toLowerCase()
+          : "";
+      return Object.values(discussion).filter((node) => {
+        if (!node || !node.author || !node.permlink) return false;
+        if (Number(node.depth) === 0) return false;
+        if (!self) return true;
+        const key = String(node.author).toLowerCase() + "/" + String(node.permlink).toLowerCase();
+        return key !== self;
+      }).length;
     }
     return Number(root && root.children) || 0;
   }
@@ -6019,6 +6041,176 @@
     postLayer.open = true;
     updateScrollTopBtn();
     return layer;
+  }
+
+  function cardContentKey(author, permlink) {
+    return snapKey(author, permlink);
+  }
+
+  function cardContentStamp(post) {
+    const tags = tagsOf(post)
+      .map((t) => String(t).toLowerCase())
+      .sort()
+      .join("\n");
+    return [
+      String(post.title || ""),
+      String(post.body || ""),
+      HiveMd.extractImage(post) || "",
+      tags,
+    ].join("\u0001");
+  }
+
+  function rememberCardContent(post) {
+    if (!post || !post.author || !post.permlink) return;
+    cardContentStamps.set(cardContentKey(post.author, post.permlink), cardContentStamp(post));
+  }
+
+  function paintFeedCards(list, mapFn) {
+    const items = feedState.items || [];
+    for (let i = 0; i < items.length; i++) rememberCardContent(items[i]);
+    list.innerHTML = items.map(mapFn).join("");
+  }
+
+  function feedCardHrefMatches(href, author, permlink) {
+    const path = String(href || "")
+      .split("#")[0]
+      .split("?")[0]
+      .toLowerCase();
+    const needle =
+      "/@" +
+      String(author || "")
+        .replace(/^@/, "")
+        .toLowerCase() +
+      "/" +
+      String(permlink || "").toLowerCase();
+    return path.endsWith(needle);
+  }
+
+  function findFeedCard(author, permlink) {
+    const cards = document.querySelectorAll("#view article.post-card");
+    for (let i = 0; i < cards.length; i++) {
+      const hit = cards[i].querySelector("a.card-hit");
+      if (hit && feedCardHrefMatches(hit.getAttribute("href"), author, permlink)) {
+        return cards[i];
+      }
+    }
+    return null;
+  }
+
+  function postContentEdited(prev, next) {
+    if (!prev || !next || prev === next) return false;
+    return cardContentStamp(prev) !== cardContentStamp(next);
+  }
+
+  function cardContentChanged(post) {
+    if (!post || !post.author || !post.permlink) return false;
+    const prev = cardContentStamps.get(cardContentKey(post.author, post.permlink));
+    if (prev != null) return prev !== cardContentStamp(post);
+    const item = findLoadedPost(post.author, post.permlink);
+    if (!item || item === post) return false;
+    return postContentEdited(item, post);
+  }
+
+  function commentCountForReturn(post) {
+    const section = document.getElementById("comments");
+    if (
+      section &&
+      samePostId(
+        {
+          author: section.getAttribute("data-root-author"),
+          permlink: section.getAttribute("data-root-permlink"),
+        },
+        post.author,
+        post.permlink
+      )
+    ) {
+      const shown = Number(section.getAttribute("data-count"));
+      if (Number.isFinite(shown)) return Math.max(0, shown);
+    }
+    return Number(post && post.children) || 0;
+  }
+
+  function copyDefinedFields(dest, src, keys) {
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      if (src[key] !== undefined) dest[key] = src[key];
+    }
+  }
+
+  function copyPostContent(dest, src) {
+    copyDefinedFields(dest, src, [
+      "title",
+      "body",
+      "json_metadata",
+      "updated",
+      "category",
+      "community",
+      "community_title",
+    ]);
+  }
+
+  function copyPostStats(dest, src, commentCount) {
+    copyDefinedFields(dest, src, [
+      "active_votes",
+      "stats",
+      "payout",
+      "pending_payout_value",
+      "total_payout_value",
+      "curator_payout_value",
+      "author_payout_value",
+      "net_rshares",
+      "is_paidout",
+      "cashout_time",
+      "payout_at",
+      "max_accepted_payout",
+    ]);
+    dest.children = commentCount;
+  }
+
+  function replaceFeedCard(card, post) {
+    const html =
+      profileState.author && !isRootPost(post) ? profileCardHtml(post) : cardHtml(post);
+    const wrap = document.createElement("div");
+    wrap.innerHTML = String(html || "").trim();
+    const next = wrap.firstElementChild;
+    if (next) card.replaceWith(next);
+  }
+
+  function patchFeedCardStats(card, post, commentCount) {
+    syncVoteButtons(post.author, post.permlink, voteView(post));
+    const payout = formatPayout(post);
+    card.querySelectorAll(".payout").forEach((el) => {
+      el.textContent = payout;
+    });
+    const label = "C " + commentCount;
+    card.querySelectorAll(".comment-n").forEach((el) => {
+      el.textContent = label;
+    });
+  }
+
+  // The list under a post stays mounted. On the way back, rebuild the card
+  // when the post content changed, and otherwise refresh only its figures.
+  function syncFeedCardOnReturn() {
+    const post = currentPost;
+    if (!post || !post.author || !post.permlink) return;
+    const item = findLoadedPost(post.author, post.permlink);
+    const card = findFeedCard(post.author, post.permlink);
+    if (!item && !card) return;
+    const edited = cardContentChanged(post);
+    const comments = commentCountForReturn(post);
+    if (item && item !== post) {
+      if (edited) copyPostContent(item, post);
+      copyPostStats(item, post, comments);
+    } else if (item) {
+      item.children = comments;
+    }
+    rememberCardContent(item && edited ? item : post);
+    if (!card) return;
+    if (edited) {
+      replaceFeedCard(card, item || post);
+      return;
+    }
+    patchFeedCardStats(card, post, comments);
   }
 
   function suspendPostLayer(opts) {
@@ -7136,7 +7328,7 @@
       } catch (err) {
         showError(err.message || String(err));
       }
-      list.innerHTML = feedState.items.map(profileCardHtml).join("");
+      paintFeedCards(list, profileCardHtml);
       if (!feedState.items.length && feedState.done) {
         status.hidden = true;
         list.innerHTML = `
@@ -7598,7 +7790,7 @@
         } catch (err) {
           showError(err.message || String(err));
         }
-        list.innerHTML = feedState.items.map(cardHtml).join("");
+        paintFeedCards(list, cardHtml);
         if (!feedState.items.length && feedState.done) {
           status.hidden = true;
           list.innerHTML = `
@@ -7776,6 +7968,7 @@
     // the dialog returns to that post instead of the feed underneath.
     const keepPost = r.name === "publish" && postLayer.open;
     if (postLayer.open && !keepPost) {
+      if (sameView) syncFeedCardOnReturn();
       suspendPostLayer({ restoreScroll: sameView });
     }
     if (!keepPost) currentPost = null;
