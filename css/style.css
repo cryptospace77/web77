@@ -1377,7 +1377,8 @@ html.has-mouse .session-account:focus-within .session-account-menu {
 }
 
 .stat-pill:hover,
-.card-stats .comment-count-link:hover {
+.card-stats .comment-count-link:hover,
+.post-stats-bar .comment-count-link:hover {
   border-color: var(--yellow);
 }
 
@@ -1881,7 +1882,8 @@ a.community:hover {
   font-weight: 500;
 }
 
-.card-stats .comment-count-link {
+.card-stats .comment-count-link,
+.post-stats-bar .comment-count-link {
   display: inline-flex;
   align-items: center;
   min-height: 2.45rem;
@@ -4088,7 +4090,10 @@ a.publish-fab:hover {
 
   .card-stats > .vote-wrap,
   .card-stats > .comment-count-link,
-  .card-stats > .payout {
+  .card-stats > .payout,
+  .post-stats-bar > .vote-wrap,
+  .post-stats-bar > .comment-count-link,
+  .post-stats-bar > .payout {
     flex-shrink: 0;
   }
 

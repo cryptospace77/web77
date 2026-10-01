@@ -1980,6 +1980,15 @@
     return scrollTargetIntoView(el, behavior);
   }
 
+  function focusRootCommentComposer() {
+    const section = document.getElementById("comments");
+    const input =
+      section && section.querySelector(":scope > .comment-composer .composer-input");
+    if (!input) return false;
+    input.focus({ preventScroll: true });
+    return true;
+  }
+
   function scrollToAnchor(hash, behavior) {
     const raw = String(hash == null ? location.hash : hash).replace(/^#/, "");
     if (!raw || raw.charAt(0) === "/") return false;
@@ -2569,6 +2578,7 @@
       e.preventDefault();
       pendingCommentsScroll = false;
       scrollToComments();
+      if (a.closest(".post-stats-bar")) focusRootCommentComposer();
       return;
     }
     if (toComments) pendingCommentsScroll = true;
@@ -5331,13 +5341,7 @@
     const section = $("#comments");
     if (!section) return;
     const n = Math.max(0, (Number(section.getAttribute("data-count")) || 0) + delta);
-    section.setAttribute("data-count", String(n));
-    const article = section.closest(".article");
-    if (article) {
-      article.querySelectorAll(".comment-n").forEach((el) => {
-        el.textContent = "C " + n;
-      });
-    }
+    setCommentCount(n);
     const author = section.getAttribute("data-root-author");
     const permlink = section.getAttribute("data-root-permlink");
     if (!author || !permlink) return;
@@ -5831,6 +5835,7 @@
         <div class="post-body">${HiveMd.renderMarkdown(root.body || "")}</div>
         <div class="post-stats-bar" id="stats">
           ${voteControlHtml(root, "pills")}
+          ${commentCountHtml(commentCount, "#comments")}
           ${payoutHtml(root, true)}
           ${postEdit}
         </div>
