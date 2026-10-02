@@ -1698,6 +1698,61 @@ html.has-mouse .session-account:focus-within .session-account-menu {
   opacity: 1;
 }
 
+.post-card.is-muted {
+  padding: 1.15rem 1.35rem;
+  gap: 0.65rem;
+}
+
+.post-card.is-muted:hover {
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+.post-card.is-muted:hover::after {
+  opacity: 0;
+}
+
+.muted-notice {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.45rem 0.75rem;
+  margin: 0;
+  min-width: 0;
+  font-family: var(--font-body);
+  font-size: 1.05rem;
+  line-height: 1.5;
+  color: var(--gray-dim);
+}
+
+.muted-notice > span {
+  min-width: 0;
+}
+
+.show-muted {
+  flex: 0 0 auto;
+  color: var(--gray);
+  cursor: pointer;
+}
+
+.show-muted:hover {
+  color: var(--yellow);
+}
+
+.comment.is-muted {
+  padding-top: 0.85rem;
+}
+
+.comment.is-muted .muted-notice {
+  margin: 0;
+}
+
+.comment.is-muted:has(.comment-replies) .muted-notice {
+  margin: 0 0 0.35rem;
+}
+
 .post-content {
   flex: 1;
   min-width: 0;

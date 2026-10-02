@@ -7,6 +7,7 @@
   const APP_ID = "cryptospace77.com";
   const APP_VERSION = "0.15";
   const FEED_TARGET = 20;
+  const FILTER_LOW_REP = 20;
   const MAX_PAGES_PER_LOAD = 12;
   const SESSION_KEY = "cs77_user";
   const KEYCHAIN_USER_KEY = "cs77_keychain_user";
@@ -85,6 +86,7 @@
   };
   const postSnaps = new Map();
   const cardContentStamps = new Map();
+  const revealedMuted = new Set();
   const POST_SNAP_MAX = 6;
   const communityState = {
     name: "",
@@ -1947,9 +1949,66 @@
     queueVote(author, permlink, -percent);
   }
 
-  function passesFeedFilter(post) {
-    const rep = HiveMd.displayReputation(post.author_reputation);
-    return rep > 20;
+  function mutedKey(author, permlink) {
+    return snapKey(author, permlink);
+  }
+
+  function isLowReputation(rep) {
+    return Math.floor(HiveMd.displayReputation(rep)) < FILTER_LOW_REP;
+  }
+
+  function isModerated(node) {
+    const stats = node && node.stats;
+    return Boolean(stats && (stats.gray || stats.hide));
+  }
+
+  function isMutedRevealed(author, permlink) {
+    return revealedMuted.has(mutedKey(author, permlink));
+  }
+
+  function markMutedRevealed(author, permlink) {
+    revealedMuted.add(mutedKey(author, permlink));
+  }
+
+  function isMutedHidden(node) {
+    if (!node || !node.author) return false;
+    if (isOwnAuthor(node.author)) return false;
+    if (isMutedRevealed(node.author, node.permlink)) return false;
+    return isLowReputation(node.author_reputation) || isModerated(node);
+  }
+
+  function mutedNoticeHtml(kind, node) {
+    const label = kind === "comment" ? "show comment" : "show post";
+    const reason = isLowReputation(node && node.author_reputation)
+      ? "content hidden due to low reputation"
+      : "content hidden due to moderation";
+    return `<p class="muted-notice"><span>${reason}</span><span class="show-muted">${label}</span></p>`;
+  }
+
+  function revealMuted(btn) {
+    const card = btn.closest("article.post-card");
+    if (card) {
+      const author = card.getAttribute("data-author");
+      const permlink = card.getAttribute("data-permlink");
+      if (!author || !permlink) return;
+      markMutedRevealed(author, permlink);
+      const post = findLoadedPost(author, permlink) || findContentNode(author, permlink);
+      if (!post) return;
+      replaceFeedCard(card, post);
+      return;
+    }
+    const comment = btn.closest("article.comment");
+    if (!comment) return;
+    const author = comment.getAttribute("data-author");
+    const permlink = comment.getAttribute("data-permlink");
+    if (!author || !permlink) return;
+    markMutedRevealed(author, permlink);
+    const node = findContentNode(author, permlink);
+    if (!node) return;
+    const wrap = document.createElement("div");
+    wrap.innerHTML = String(renderComment(node) || "").trim();
+    const next = wrap.firstElementChild;
+    if (next) comment.replaceWith(next);
   }
 
   function isBlacklistedUser(name) {
@@ -4661,9 +4720,8 @@
           if (feedState.seen.has(key)) continue;
           feedState.seen.add(key);
           added++;
-          if (post.stats && post.stats.hide) continue;
           if (isBlacklistedPost(post)) continue;
-          if (personal || tag || passesFeedFilter(post)) feedState.items.push(post);
+          feedState.items.push(post);
         }
 
         const last = batch[batch.length - 1];
@@ -4721,21 +4779,33 @@
   }
 
   function cardHtml(post) {
-    const img = HiveMd.extractImage(post);
-    const thumb = img
-      ? `<img class="card-thumb" src="${HiveMd.escapeHtml(HiveMd.proxyImage(img, 480))}" alt="">`
-      : "";
+    const authorAttr = HiveMd.escapeHtml(post.author);
+    const permlinkAttr = HiveMd.escapeHtml(post.permlink);
     const community = communityLabelHtml(post);
     const rep = Math.floor(HiveMd.displayReputation(post.author_reputation));
-    return `
-      <article class="post-card${img ? " has-image" : " no-thumb"}">
+    const meta = `
         <div class="card-meta">
           ${authorLinkHtml(post.author, "small")}
           <span class="meta-sep">·</span>
           <span>${rep}</span>
           ${community}
           ${metaTimeHtml(post.created, postPath(post))}
-        </div>
+        </div>`;
+    if (isMutedHidden(post)) {
+      return `
+      <article class="post-card is-muted" data-author="${authorAttr}" data-permlink="${permlinkAttr}">
+        ${meta}
+        ${mutedNoticeHtml("post", post)}
+      </article>
+    `;
+    }
+    const img = HiveMd.extractImage(post);
+    const thumb = img
+      ? `<img class="card-thumb" src="${HiveMd.escapeHtml(HiveMd.proxyImage(img, 480))}" alt="">`
+      : "";
+    return `
+      <article class="post-card${img ? " has-image" : " no-thumb"}" data-author="${authorAttr}" data-permlink="${permlinkAttr}">
+        ${meta}
         <a class="card-hit" href="${HiveMd.escapeHtml(postPath(post))}">
           <h2>${HiveMd.escapeHtml(post.title || "(untitled)")}</h2>
           <p class="card-excerpt">${HiveMd.escapeHtml(HiveMd.excerpt(post, 200))}</p>
@@ -5525,24 +5595,34 @@
     if (!node) return "";
     if (isBlacklistedPost(node)) return "";
     rememberContent(node);
-    const body = HiveMd.renderMarkdown(node.body || "");
     const replies = (node._replies || []).map(renderComment).join("");
     const user = observer();
     const author = HiveMd.escapeHtml(node.author);
     const permlink = HiveMd.escapeHtml(node.permlink);
     const parentAuthor = HiveMd.escapeHtml(node.parent_author || "");
     const parentPermlink = HiveMd.escapeHtml(node.parent_permlink || "");
+    const head = `
+        <div class="comment-head">
+          ${authorLinkHtml(node.author, "small")}
+          <span>· ${Math.floor(HiveMd.displayReputation(node.author_reputation))}</span>
+          <span>· ${metaTimeHtml(node.created, commentPath(node))}</span>
+        </div>`;
+    if (isMutedHidden(node)) {
+      return `
+      <article class="comment is-muted" data-author="${author}" data-permlink="${permlink}" data-parent-author="${parentAuthor}" data-parent-permlink="${parentPermlink}" id="@${author}/${permlink}">
+        ${mutedNoticeHtml("comment", node)}
+        ${replies ? `<div class="comment-replies">${replies}</div>` : ""}
+      </article>
+    `;
+    }
+    const body = HiveMd.renderMarkdown(node.body || "");
     const replyBtn = user
       ? `<button type="button" class="comment-reply-btn" data-reply-author="${author}" data-reply-permlink="${permlink}">Reply</button>`
       : "";
     const editBtn = editButtonHtml("comment", node.author, node.permlink);
     return `
       <article class="comment" data-author="${author}" data-permlink="${permlink}" data-parent-author="${parentAuthor}" data-parent-permlink="${parentPermlink}" id="@${author}/${permlink}">
-        <div class="comment-head">
-          ${authorLinkHtml(node.author, "small")}
-          <span>· ${Math.floor(HiveMd.displayReputation(node.author_reputation))}</span>
-          <span>· ${metaTimeHtml(node.created, commentPath(node))}</span>
-        </div>
+        ${head}
         <div class="comment-body">${body}</div>
         <div class="comment-actions">
           ${voteControlHtml(node, "pills")}
@@ -6373,9 +6453,22 @@
   function findFeedCard(author, permlink) {
     const cards = document.querySelectorAll("#view article.post-card");
     for (let i = 0; i < cards.length; i++) {
-      const hit = cards[i].querySelector("a.card-hit");
+      const card = cards[i];
+      if (
+        samePostId(
+          {
+            author: card.getAttribute("data-author"),
+            permlink: card.getAttribute("data-permlink"),
+          },
+          author,
+          permlink
+        )
+      ) {
+        return card;
+      }
+      const hit = card.querySelector("a.card-hit");
       if (hit && feedCardHrefMatches(hit.getAttribute("href"), author, permlink)) {
-        return cards[i];
+        return card;
       }
     }
     return null;
@@ -7963,7 +8056,6 @@
             feedState.seen.add(key);
             added++;
             if (sort === "posts" && !isRootPost(post)) continue;
-            if (post.stats && post.stats.hide) continue;
             if (isBlacklistedPost(post)) continue;
             feedState.items.push(post);
           }
@@ -9159,6 +9251,12 @@
       if (stakeBtn && inInteractiveSurface(stakeBtn)) {
         e.preventDefault();
         openWalletOverlay(stakeBtn.getAttribute("data-wallet-op") || "");
+        return;
+      }
+      const showMuted = e.target.closest(".show-muted");
+      if (showMuted && inInteractiveSurface(showMuted)) {
+        e.preventDefault();
+        revealMuted(showMuted);
         return;
       }
       const postEditBtn = e.target.closest(".post-edit-btn");
