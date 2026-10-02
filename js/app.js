@@ -56,6 +56,8 @@
 
   const localVotes = new Map();
   const votesCache = new Map();
+  const localReblogs = new Map();
+  const reblogsCache = new Map();
   const payoutByKey = new Map();
   const contentByKey = new Map();
   let hivePower = null;
@@ -968,6 +970,11 @@
     } else if (openVoters) {
       hideVoteVoters();
     }
+    if (openReblog && openReblog.btn && openReblog.btn.isConnected && openReblog.panel) {
+      placeReblogConfirm(openReblog.btn, openReblog.panel);
+    } else if (openReblog) {
+      hideReblogConfirm();
+    }
   }
 
   function clearUpvoteConfirmStyle() {
@@ -990,6 +997,11 @@
     document.querySelectorAll(".vote-wrap.is-open").forEach((wrap) => {
       wrap.classList.remove("is-open");
     });
+    hideReblogConfirm();
+  }
+
+  function hideVoteUi() {
+    hideVoteSlider();
   }
 
   let openVoters = null;
@@ -998,6 +1010,8 @@
   let votersHideTimer = 0;
   let votersPanelNode = null;
   let votersTouching = false;
+  let openReblog = null;
+  let reblogConfirmGen = 0;
 
   function voteHitFrom(target) {
     return target && target.closest ? target.closest(".vote-hit") : null;
@@ -1244,7 +1258,10 @@
     if (end <= start) return 0;
     let html = "";
     for (let i = start; i < end; i++) {
-      html += voteVoterRowHtml(openVoters.list[i], openVoters.totalPayout, openVoters.totalRshares);
+      html +=
+        openVoters.kind === "reblog"
+          ? rebloggerRowHtml(openVoters.list[i])
+          : voteVoterRowHtml(openVoters.list[i], openVoters.totalPayout, openVoters.totalRshares);
     }
     ul.insertAdjacentHTML("beforeend", html);
     openVoters.shown = end;
@@ -1308,6 +1325,7 @@
   function showVoteVoters(el, force) {
     if ((!force && !hoverFine()) || !el || !el.isConnected) return;
     if (openSlider) return;
+    if (openReblog) hideReblogConfirm();
     const author = el.getAttribute("data-vote-author");
     const permlink = el.getAttribute("data-vote-permlink");
     const dir = voteDirFromEl(el);
@@ -1317,6 +1335,7 @@
     const panel = votersPanelEl();
     if (
       openVoters &&
+      openVoters.kind === "vote" &&
       openVoters.author === author &&
       openVoters.permlink === permlink &&
       openVoters.dir === dir
@@ -1327,7 +1346,7 @@
       return;
     }
     const gen = ++votersGen;
-    openVoters = { el, author, permlink, dir, gen };
+    openVoters = { el, author, permlink, dir, kind: "vote", gen };
     panel.classList.toggle("is-down", dir === "down");
     panel.innerHTML = `<p class="vote-voters-caption">${
       dir === "down" ? "Downvotes" : "Upvotes"
@@ -1368,7 +1387,454 @@
     }, 80);
   }
 
+  function normalizeReblogName(name) {
+    return String(name || "")
+      .replace(/^@/, "")
+      .trim()
+      .toLowerCase();
+  }
+
+  function reblogCountOf(post) {
+    const n = Number(post && post.reblogs);
+    if (Number.isFinite(n) && n >= 0) return n;
+    const list = post && post.reblogged_by;
+    if (Array.isArray(list)) return list.length;
+    return 0;
+  }
+
+  function reblogPostFor(author, permlink) {
+    const item = findLoadedPost(author, permlink);
+    if (item) {
+      const shown = cardDisplayPost(item);
+      if (shown && shown.author) return shown;
+    }
+    if (currentPost && samePostId(currentPost, author, permlink)) return currentPost;
+    const node = findContentNode(author, permlink);
+    return node || { author, permlink, reblogs: 0 };
+  }
+
+  function reblogView(post) {
+    const author = post && post.author;
+    const permlink = post && post.permlink;
+    if (!author || !permlink) {
+      return { count: 0, mine: false, pending: false };
+    }
+    const key = postKey(author, permlink);
+    const serverCount = reblogCountOf(post);
+    const local = localReblogs.get(key);
+    const cache = reblogsCache.get(key);
+    const user = observer();
+    let mine = false;
+    if (user && cache && Array.isArray(cache.names)) {
+      mine = cache.names.indexOf(user) !== -1;
+    }
+    if (local) {
+      return {
+        count: Math.max(0, local.count != null ? local.count : serverCount),
+        mine: Boolean(local.mine),
+        pending: Boolean(local.pending),
+      };
+    }
+    return { count: serverCount, mine, pending: false };
+  }
+
+  function loadRebloggedBy(author, permlink) {
+    const key = postKey(author, permlink);
+    const hit = reblogsCache.get(key);
+    if (hit && Array.isArray(hit.names)) return Promise.resolve(hit.names);
+    if (hit && hit.promise) return hit.promise;
+    const promise = HiveApi.getRebloggedBy(author, permlink)
+      .then((names) => {
+        reblogsCache.set(key, { names });
+        return names;
+      })
+      .catch((err) => {
+        reblogsCache.delete(key);
+        throw err;
+      });
+    reblogsCache.set(key, { promise });
+    return promise;
+  }
+
+  function mergeLocalRebloggers(names, author, permlink) {
+    const user = observer();
+    const list = Array.isArray(names) ? names.slice() : [];
+    const local = localReblogs.get(postKey(author, permlink));
+    if (!user) return list;
+    const hasUser = list.indexOf(user) !== -1;
+    if (local && local.mine && !hasUser) list.unshift(user);
+    if (local && local.mine === false && hasUser) {
+      return list.filter((n) => n !== user);
+    }
+    return list;
+  }
+
+  function rebloggerRowHtml(name) {
+    const n = normalizeReblogName(name);
+    if (!n) return "";
+    const href = HiveMd.escapeHtml(appHref("/@" + n));
+    const safe = HiveMd.escapeHtml(n);
+    return `<li><a class="vote-voter" href="${href}"><span class="vote-voter-name">@${safe}</span></a></li>`;
+  }
+
+  function renderReblogUsers(panel, names, author, permlink) {
+    const list = mergeLocalRebloggers(names, author, permlink);
+    const keepShown =
+      openVoters &&
+      openVoters.kind === "reblog" &&
+      openVoters.author === author &&
+      openVoters.permlink === permlink &&
+      openVoters.shown
+        ? openVoters.shown
+        : 0;
+    if (openVoters) {
+      openVoters.list = list;
+      openVoters.shown = 0;
+    }
+    if (!list.length) {
+      panel.innerHTML =
+        `<p class="vote-voters-caption">Reblogs</p><p class="vote-voters-status">No reblogs yet.</p>`;
+      return;
+    }
+    panel.innerHTML = `<p class="vote-voters-caption">Reblogs</p><ul class="vote-voters-list"></ul>`;
+    appendVoterRows(Math.max(VOTERS_PAGE, keepShown));
+    maybeLoadMoreVoters();
+  }
+
+  function showReblogUsers(el, force) {
+    if ((!force && !hoverFine()) || !el || !el.isConnected) return;
+    if (openSlider || openReblog) return;
+    const author = el.getAttribute("data-reblog-author");
+    const permlink = el.getAttribute("data-reblog-permlink");
+    if (!author || !permlink) return;
+    window.clearTimeout(votersHideTimer);
+    votersHideTimer = 0;
+    const panel = votersPanelEl();
+    if (
+      openVoters &&
+      openVoters.kind === "reblog" &&
+      openVoters.author === author &&
+      openVoters.permlink === permlink
+    ) {
+      openVoters.el = el;
+      panel.hidden = false;
+      placeVoteVoters(el, panel);
+      return;
+    }
+    const gen = ++votersGen;
+    openVoters = { el, author, permlink, dir: "reblog", kind: "reblog", gen };
+    panel.classList.remove("is-down");
+    panel.innerHTML =
+      `<p class="vote-voters-caption">Reblogs</p><p class="vote-voters-status">Loading…</p>`;
+    panel.hidden = false;
+    document.body.appendChild(panel);
+    placeVoteVoters(el, panel);
+    loadRebloggedBy(author, permlink)
+      .then((names) => {
+        if (!openVoters || openVoters.gen !== gen) return;
+        renderReblogUsers(panel, names, author, permlink);
+        placeVoteVoters(el, panel);
+        syncReblogButtons(author, permlink, reblogView(reblogPostFor(author, permlink)));
+      })
+      .catch(() => {
+        if (!openVoters || openVoters.gen !== gen) return;
+        panel.innerHTML = `<p class="vote-voters-status">Could not load reblogs.</p>`;
+        placeVoteVoters(el, panel);
+      });
+  }
+
+  function onReblogHitEnter(el) {
+    if (!hoverFine() || !el) return;
+    if (openReblog) return;
+    window.clearTimeout(votersHideTimer);
+    window.clearTimeout(votersShowTimer);
+    votersHideTimer = 0;
+    if (
+      openVoters &&
+      openVoters.kind === "reblog" &&
+      openVoters.el === el &&
+      votersPanelEl() &&
+      !votersPanelEl().hidden
+    ) {
+      showReblogUsers(el);
+      return;
+    }
+    votersShowTimer = window.setTimeout(() => {
+      votersShowTimer = 0;
+      showReblogUsers(el);
+    }, 80);
+  }
+
+  function placeReblogConfirm(btn, panel) {
+    if (!btn || !panel || panel.hidden) return;
+    const rect = btn.getBoundingClientRect();
+    panel.style.position = "fixed";
+    panel.style.zIndex = "64";
+    panel.style.top = Math.round(rect.bottom + 8) + "px";
+    panel.style.left = Math.round(rect.left) + "px";
+    panel.style.right = "auto";
+    const box = panel.getBoundingClientRect();
+    const maxRight = window.innerWidth - 8;
+    if (box.right > maxRight) {
+      panel.style.left = Math.max(8, Math.round(maxRight - box.width)) + "px";
+    }
+    if (panel.getBoundingClientRect().left < 8) panel.style.left = "8px";
+    const spaceBelow = window.innerHeight - rect.bottom - 12;
+    if (box.height > spaceBelow && rect.top - 12 > spaceBelow) {
+      panel.style.top =
+        Math.max(8, Math.round(rect.top - box.height - 8)) + "px";
+    }
+  }
+
+  function setReblogConfirmStatus(text, warn) {
+    if (!openReblog || !openReblog.panel) return;
+    const status = openReblog.panel.querySelector(".reblog-confirm-status");
+    if (!status) return;
+    if (!text) {
+      status.hidden = true;
+      status.textContent = "";
+      status.classList.remove("is-warn");
+      return;
+    }
+    status.hidden = false;
+    status.textContent = text;
+    status.classList.toggle("is-warn", Boolean(warn));
+  }
+
+  function setReblogConfirmReady(ready) {
+    if (!openReblog || !openReblog.panel) return;
+    const confirm = openReblog.panel.querySelector(".reblog-confirm");
+    if (confirm) confirm.disabled = !ready;
+  }
+
+  function setReblogConfirmCaption(own, undo) {
+    if (!openReblog || !openReblog.panel) return;
+    const caption = openReblog.panel.querySelector(".reblog-confirm-caption");
+    if (!caption) return;
+    caption.textContent = undo
+      ? "Undo reblog?"
+      : own
+        ? "Reblog your post?"
+        : "Reblog this post?";
+  }
+
+  function setReblogConfirmAction(undo) {
+    if (!openReblog || !openReblog.panel) return;
+    const confirm = openReblog.panel.querySelector(".reblog-confirm");
+    if (!confirm) return;
+    confirm.textContent = undo ? "Undo" : "Reblog";
+    confirm.classList.toggle("is-undo", Boolean(undo));
+  }
+
+  function hideReblogConfirm() {
+    if (!openReblog) return;
+    const { wrap, panel } = openReblog;
+    openReblog = null;
+    if (!panel) return;
+    panel.hidden = true;
+    panel.style.position = "";
+    panel.style.top = "";
+    panel.style.left = "";
+    panel.style.right = "";
+    panel.style.zIndex = "";
+    if (wrap && panel.parentNode !== wrap) wrap.appendChild(panel);
+    if (wrap) wrap.classList.remove("is-open");
+  }
+
+  function showReblogConfirm(btn) {
+    hideVoteVoters();
+    hideVoteSlider();
+    const wrap = btn.closest(".reblog-wrap");
+    const panel = wrap && wrap.querySelector(".reblog-confirm-panel");
+    if (!wrap || !panel) return;
+    wrap.classList.add("is-open");
+    openReblog = {
+      wrap,
+      btn,
+      panel,
+      author: btn.getAttribute("data-reblog-author"),
+      permlink: btn.getAttribute("data-reblog-permlink"),
+      gen: ++reblogConfirmGen,
+      already: false,
+      own: observer() === normalizeReblogName(btn.getAttribute("data-reblog-author")),
+    };
+    setReblogConfirmCaption(openReblog.own, false);
+    setReblogConfirmAction(false);
+    setReblogConfirmStatus("", false);
+    setReblogConfirmReady(false);
+    document.body.appendChild(panel);
+    panel.hidden = false;
+    placeReblogConfirm(btn, panel);
+  }
+
+  function reblogWrapsFor(author, permlink) {
+    return Array.from(document.querySelectorAll(".reblog-wrap")).filter(
+      (el) =>
+        el.getAttribute("data-reblog-author") === author &&
+        el.getAttribute("data-reblog-permlink") === permlink
+    );
+  }
+
+  function syncReblogButtons(author, permlink, state) {
+    const pending = Boolean(state && state.pending);
+    const mine = Boolean(state && state.mine);
+    const count = state && state.count != null ? String(state.count) : "0";
+    reblogWrapsFor(author, permlink).forEach((root) => {
+      const btn = root.querySelector(".reblog-btn");
+      if (!btn) return;
+      btn.classList.toggle("is-reblogged", mine);
+      btn.classList.toggle("is-pending", pending);
+      btn.disabled = pending;
+      btn.setAttribute("aria-pressed", mine ? "true" : "false");
+      btn.setAttribute("aria-label", mine ? "Undo reblog" : "Reblog");
+      const n = btn.querySelector(".reblog-n");
+      if (n) n.textContent = count;
+    });
+  }
+
+  function queueReblog(author, permlink, undo) {
+    const user = observer();
+    if (!user) return;
+    const key = postKey(author, permlink);
+    const post = reblogPostFor(author, permlink);
+    const shown = reblogView(post);
+    if (shown.pending) return;
+    if (undo && !shown.mine) return;
+    if (!undo && shown.mine) return;
+    const mine = !undo;
+    const nextCount = Math.max(0, shown.count + (undo ? -1 : 1));
+    const previous = localReblogs.get(key);
+    localReblogs.set(key, { mine, pending: true, count: nextCount });
+    syncReblogButtons(author, permlink, { mine, pending: true, count: nextCount });
+    hideReblogConfirm();
+    const body = { account: user, author, permlink };
+    if (undo) body.delete = "delete";
+    const { promise } = ChainQueue.enqueue({
+      username: user,
+      key: "Posting",
+      operations: [
+        [
+          "custom_json",
+          {
+            required_auths: [],
+            required_posting_auths: [user],
+            id: "follow",
+            json: JSON.stringify(["reblog", body]),
+          },
+        ],
+      ],
+      meta: { type: undo ? "unreblog" : "reblog", author, permlink },
+    });
+    promise
+      .then(() => {
+        localReblogs.set(key, { mine, pending: false, count: nextCount });
+        const cache = reblogsCache.get(key);
+        if (cache && Array.isArray(cache.names)) {
+          if (undo) cache.names = cache.names.filter((n) => n !== user);
+          else if (cache.names.indexOf(user) === -1) cache.names = [user].concat(cache.names);
+        } else if (!undo && (!cache || !cache.promise)) {
+          reblogsCache.set(key, { names: [user] });
+        }
+        if (post && post.author) {
+          post.reblogs = nextCount;
+        }
+        if (currentPost && samePostId(currentPost, author, permlink)) {
+          currentPost.reblogs = nextCount;
+        }
+        syncReblogButtons(author, permlink, { mine, pending: false, count: nextCount });
+        if (
+          openVoters &&
+          openVoters.kind === "reblog" &&
+          openVoters.author === author &&
+          openVoters.permlink === permlink
+        ) {
+          const panel = votersPanelEl();
+          const names =
+            (reblogsCache.get(key) && reblogsCache.get(key).names) || (undo ? [] : [user]);
+          renderReblogUsers(panel, names, author, permlink);
+          placeVoteVoters(openVoters.el, panel);
+        }
+      })
+      .catch((err) => {
+        if (previous) localReblogs.set(key, previous);
+        else localReblogs.delete(key);
+        syncReblogButtons(author, permlink, reblogView(reblogPostFor(author, permlink)));
+        showError(err.message || String(err));
+      });
+  }
+
+  async function onReblogClick(btn) {
+    if (!btn) return;
+    if (btn.classList.contains("is-pending") || btn.disabled) return;
+    const user = observer();
+    if (!user) {
+      openLogin();
+      return;
+    }
+    const author = btn.getAttribute("data-reblog-author");
+    const permlink = btn.getAttribute("data-reblog-permlink");
+    if (!author || !permlink) return;
+    if (openReblog && openReblog.btn === btn) {
+      hideReblogConfirm();
+      return;
+    }
+    showReblogConfirm(btn);
+    const gen = openReblog && openReblog.gen;
+    setReblogConfirmStatus("Checking…", false);
+    setReblogConfirmReady(false);
+    try {
+      const names = await loadRebloggedBy(author, permlink);
+      if (!openReblog || openReblog.gen !== gen) return;
+      const viewState = reblogView(reblogPostFor(author, permlink));
+      const own = user === normalizeReblogName(author);
+      const local = localReblogs.get(postKey(author, permlink));
+      const already =
+        names.indexOf(user) !== -1 ||
+        viewState.mine ||
+        Boolean(local && local.mine);
+      openReblog.already = already;
+      openReblog.own = own;
+      setReblogConfirmCaption(own, already);
+      setReblogConfirmAction(already);
+      syncReblogButtons(author, permlink, viewState);
+      if (already) {
+        setReblogConfirmStatus("This post is on your blog.", false);
+        setReblogConfirmReady(true);
+      } else {
+        setReblogConfirmStatus("", false);
+        setReblogConfirmReady(true);
+      }
+      placeReblogConfirm(btn, openReblog.panel);
+    } catch {
+      if (!openReblog || openReblog.gen !== gen) return;
+      setReblogConfirmStatus("Could not check reblogs.", true);
+      setReblogConfirmReady(true);
+      placeReblogConfirm(btn, openReblog.panel);
+    }
+  }
+
+  function onReblogConfirm(confirmBtn) {
+    const author =
+      (openReblog && openReblog.author) ||
+      confirmBtn.getAttribute("data-reblog-author");
+    const permlink =
+      (openReblog && openReblog.permlink) ||
+      confirmBtn.getAttribute("data-reblog-permlink");
+    if (!author || !permlink) return;
+    const user = observer();
+    if (!user) {
+      openLogin();
+      return;
+    }
+    if (!hasSigner(user)) {
+      showError(signerNeededMessage());
+      return;
+    }
+    queueReblog(author, permlink, Boolean(openReblog && openReblog.already));
+  }
+
   function showVotePanel(btn, mode) {
+    hideReblogConfirm();
     hideVoteVoters();
     hideVoteSlider();
     const wrap = btn.closest(".vote-wrap");
@@ -3515,9 +3981,11 @@
     hivePowerUser = "";
     localVotes.clear();
     votesCache.clear();
+    localReblogs.clear();
+    reblogsCache.clear();
     payoutByKey.clear();
     voteRefreshGen.clear();
-    hideVoteSlider();
+    hideVoteUi();
     pendingPublish = false;
     publishSubs = [];
     publishSubsUser = "";
@@ -4846,7 +5314,7 @@
     return Boolean(post.stats && post.stats.is_pinned);
   }
 
-  function shareIconHtml(kind) {
+  function shareIconHtml(kind, className) {
     let paths;
     if (kind === "crosspost") {
       paths = `<polygon points="21.4,12 16.8,20.2 7.2,20.2 2.6,12 7.2,3.8 16.8,3.8"/>`;
@@ -4859,7 +5327,31 @@
            <polyline points="19,12 19,19.6 5.8,19.6"/>
            <polyline points="9.4,22.8 5.8,19.6 9.4,16.4"/>`;
     }
-    return `<svg class="feed-share-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="miter" stroke-linecap="square">${paths}</g></svg>`;
+    const cls = className || "feed-share-icon";
+    return `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="miter" stroke-linecap="square">${paths}</g></svg>`;
+  }
+
+  function reblogIconHtml() {
+    return shareIconHtml("reblog", "reblog-icon");
+  }
+
+  function reblogControlHtml(post) {
+    if (!isRootPost(post)) return "";
+    const viewState = reblogView(post);
+    const author = HiveMd.escapeHtml(post.author);
+    const permlink = HiveMd.escapeHtml(post.permlink);
+    const classes = [
+      "reblog-btn",
+      "stat-pill",
+      "reblog-hit",
+      viewState.mine ? "is-reblogged" : "",
+      viewState.pending ? "is-pending" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const pending = viewState.pending ? "disabled" : "";
+    const label = viewState.mine ? "Undo reblog" : "Reblog";
+    return `<span class="reblog-wrap" data-reblog-author="${author}" data-reblog-permlink="${permlink}"><button type="button" class="${classes}" data-reblog-author="${author}" data-reblog-permlink="${permlink}" aria-pressed="${viewState.mine ? "true" : "false"}" aria-label="${label}" ${pending}>${reblogIconHtml()}<span class="reblog-n">${viewState.count}</span></button><span class="reblog-confirm-panel" hidden><p class="reblog-confirm-caption">Reblog this post?</p><p class="reblog-confirm-status" hidden></p><span class="reblog-confirm-actions"><button type="button" class="reblog-confirm" data-reblog-author="${author}" data-reblog-permlink="${permlink}">Reblog</button><button type="button" class="reblog-cancel">Cancel</button></span></span></span>`;
   }
 
   function shareLineHtml(post) {
@@ -4966,6 +5458,7 @@
         <div class="card-stats">
           ${voteControlHtml(shown, "pills")}
           ${commentCountHtml(shown.children, postPath(shown))}
+          ${reblogControlHtml(shown)}
           ${payoutHtml(shown, true)}
         </div>
       </article>
@@ -6314,6 +6807,7 @@
         <div class="post-stats-bar" id="stats">
           ${voteControlHtml(root, "pills")}
           ${commentCountHtml(commentCount, "#comments")}
+          ${reblogControlHtml(root)}
           ${payoutHtml(root, true)}
           ${postEdit}
         </div>
@@ -6699,6 +7193,8 @@
       "cashout_time",
       "payout_at",
       "max_accepted_payout",
+      "reblogs",
+      "reblogged_by",
     ]);
     dest.children = commentCount;
   }
@@ -6716,6 +7212,7 @@
 
   function patchFeedCardStats(card, post, commentCount) {
     syncVoteButtons(post.author, post.permlink, voteView(post));
+    syncReblogButtons(post.author, post.permlink, reblogView(post));
     const payout = formatPayout(post);
     card.querySelectorAll(".payout").forEach((el) => {
       el.textContent = payout;
@@ -9341,6 +9838,32 @@
     document.addEventListener(
       "click",
       (e) => {
+        const reblogConfirm = e.target.closest(".reblog-confirm");
+        if (reblogConfirm) {
+          e.preventDefault();
+          e.stopPropagation();
+          onReblogConfirm(reblogConfirm);
+          return;
+        }
+        const reblogCancel = e.target.closest(".reblog-cancel");
+        if (reblogCancel) {
+          e.preventDefault();
+          e.stopPropagation();
+          hideReblogConfirm();
+          return;
+        }
+        if (e.target.closest(".reblog-confirm-panel")) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        const reblogBtn = e.target.closest(".reblog-btn");
+        if (reblogBtn && inInteractiveSurface(reblogBtn)) {
+          e.preventDefault();
+          e.stopPropagation();
+          onReblogClick(reblogBtn);
+          return;
+        }
         const confirm = e.target.closest(".downvote-confirm");
         if (confirm) {
           e.preventDefault();
@@ -9379,16 +9902,22 @@
         }
         if (
           !e.target.closest(".vote-wrap") &&
-          !e.target.closest(".vote-voters-panel")
+          !e.target.closest(".vote-voters-panel") &&
+          !e.target.closest(".reblog-wrap")
         ) {
-          hideVoteSlider();
+          hideVoteUi();
         }
       },
       true
     );
 
     document.addEventListener("keydown", (e) => {
-      if (e.key !== "Escape" || !openSlider) return;
+      if (e.key !== "Escape") return;
+      if (openReblog) {
+        hideReblogConfirm();
+        return;
+      }
+      if (!openSlider) return;
       hideVoteSlider();
     });
 
@@ -9577,6 +10106,13 @@
         if (!fromArrow || !arrow.contains(fromArrow)) releaseVoteColor(arrow);
       }
       if (!hoverFine()) return;
+      const reblogHit = e.target.closest && e.target.closest(".reblog-hit");
+      if (reblogHit && inInteractiveSurface(reblogHit)) {
+        const fromReblog = e.relatedTarget;
+        if (fromReblog && reblogHit.contains(fromReblog)) return;
+        onReblogHitEnter(reblogHit);
+        return;
+      }
       const hit = voteHitFrom(e.target);
       if (!hit || !inInteractiveSurface(hit)) return;
       const from = e.relatedTarget;
@@ -9589,11 +10125,19 @@
         const toArrow = e.relatedTarget;
         if (!toArrow || !arrow.contains(toArrow)) arrow.setAttribute("data-vote-left", "1");
       }
+      const panel = votersPanelNode;
+      const reblogHit = e.target.closest && e.target.closest(".reblog-hit");
+      if (reblogHit) {
+        const toReblog = e.relatedTarget;
+        if (toReblog && reblogHit.contains(toReblog)) return;
+        if (toReblog && panel && panel.contains(toReblog)) return;
+        scheduleHideVoters(e);
+        return;
+      }
       const hit = voteHitFrom(e.target);
       if (!hit) return;
       const to = e.relatedTarget;
       if (to && hit.contains(to)) return;
-      const panel = votersPanelNode;
       if (to && panel && panel.contains(to)) return;
       scheduleHideVoters(e);
     });

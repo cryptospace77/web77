@@ -1382,7 +1382,9 @@ html.has-mouse .session-account:focus-within .session-account-menu {
 
 .stat-pill:hover,
 .card-stats .comment-count-link:hover,
-.post-stats-bar .comment-count-link:hover {
+.post-stats-bar .comment-count-link:hover,
+.card-stats .reblog-btn:hover,
+.post-stats-bar .reblog-btn:hover {
   border-color: var(--yellow);
 }
 
@@ -2006,6 +2008,164 @@ a.community:hover {
 .comment-count-link:hover {
   color: var(--yellow);
   text-shadow: var(--glow-yellow);
+}
+
+.reblog-wrap {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+}
+
+.reblog-wrap.is-open {
+  z-index: 20;
+}
+
+.reblog-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  min-height: 2.45rem;
+  padding: 0.45rem 0.95rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  cursor: pointer;
+  line-height: 1;
+  touch-action: manipulation;
+  user-select: none;
+  transition: color 0.15s, text-shadow 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+.reblog-btn:hover {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
+.reblog-btn:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
+}
+
+.reblog-btn.is-reblogged,
+.reblog-btn.is-reblogged:hover {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+  border-color: var(--yellow);
+}
+
+.reblog-btn.is-pending {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.reblog-icon {
+  width: 1.15em;
+  height: 1.15em;
+  flex: 0 0 auto;
+  display: block;
+  overflow: visible;
+  color: inherit;
+  shape-rendering: geometricPrecision;
+}
+
+.reblog-confirm-panel {
+  min-width: 13.5rem;
+  max-width: 18rem;
+  padding: 0.7rem 0.75rem 0.65rem;
+  border: 1px solid var(--border-hot);
+  border-radius: var(--radius);
+  background: var(--bg-panel-opaque);
+  backdrop-filter: blur(8px);
+  box-shadow: var(--glow-red), 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.reblog-confirm-caption {
+  font-family: var(--font-display);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gray);
+  margin: 0 0 0.45rem;
+}
+
+.reblog-confirm-status {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--gray);
+  line-height: 1.4;
+  margin: 0 0 0.55rem;
+}
+
+.reblog-confirm-status.is-warn {
+  color: var(--yellow);
+}
+
+.reblog-confirm-actions {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.reblog-confirm,
+.reblog-cancel {
+  appearance: none;
+  flex-shrink: 0;
+  padding: 0.28rem 0.6rem;
+  border-radius: 4px;
+  font-family: var(--font-display);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  line-height: 1.2;
+  transition: filter 0.15s, background 0.15s, color 0.15s, opacity 0.15s;
+}
+
+.reblog-confirm {
+  border: 1px solid var(--yellow);
+  background: var(--yellow);
+  color: #140f04;
+  box-shadow: var(--glow-yellow);
+}
+
+.reblog-confirm:hover:not(:disabled) {
+  filter: brightness(1.08);
+  color: #140f04;
+  text-shadow: none;
+}
+
+.reblog-confirm:disabled {
+  opacity: 0.45;
+  cursor: default;
+  filter: none;
+  box-shadow: none;
+}
+
+.reblog-cancel {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--gray);
+}
+
+.reblog-cancel:hover {
+  color: var(--yellow);
+  border-color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
+.reblog-confirm:focus-visible,
+.reblog-cancel:focus-visible {
+  outline: 1px solid var(--yellow);
+  outline-offset: 2px;
 }
 
 .card-thumb {
@@ -4319,9 +4479,11 @@ a.publish-fab:hover {
 
   .card-stats > .vote-wrap,
   .card-stats > .comment-count-link,
+  .card-stats > .reblog-wrap,
   .card-stats > .payout,
   .post-stats-bar > .vote-wrap,
   .post-stats-bar > .comment-count-link,
+  .post-stats-bar > .reblog-wrap,
   .post-stats-bar > .payout {
     flex-shrink: 0;
   }

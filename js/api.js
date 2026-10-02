@@ -517,6 +517,29 @@
     return Array.isArray(result) ? result : [];
   }
 
+  // Hivemind serves this list (same backend as bridge). bridge.get_reblogged_by is not registered.
+  async function getRebloggedBy(author, permlink) {
+    const a = String(author || "")
+      .trim()
+      .replace(/^@/, "");
+    const p = String(permlink || "").trim();
+    if (!a || !p) return [];
+    const result = await hiveRpc("condenser_api.get_reblogged_by", [a, p]);
+    if (!Array.isArray(result)) return [];
+    const out = [];
+    const seen = new Set();
+    for (let i = 0; i < result.length; i++) {
+      const name = String(result[i] || "")
+        .replace(/^@/, "")
+        .trim()
+        .toLowerCase();
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      out.push(name);
+    }
+    return out;
+  }
+
   async function getContent(author, permlink) {
     const a = String(author || "")
       .trim()
@@ -978,6 +1001,7 @@
     getAccounts,
     getDynamicGlobalProperties,
     getActiveVotes,
+    getRebloggedBy,
     getContent,
     getRewardFund,
     getMedianHistoryPrice,
