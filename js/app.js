@@ -33,7 +33,8 @@
   const FAVORITE_COMMUNITIES_KEY = "cs77_favorite_communities";
   const WELCOME_SEEN_KEY = "cs77_welcome_seen";
   const PROFILE_IMAGE_KEY = "cs77_profile_image";
-  const SESSION_AVATAR_FALLBACK = "/assets/satoshi-small.png";
+  const SESSION_AVATAR_DEFAULT_LARGE = "/assets/satoshi.png";
+  const SESSION_AVATAR_DEFAULT_SMALL = "/assets/satoshi-small.png";
   const MAX_FAVORITE_COMMUNITIES = 40;
   const PUBLISH_DRAFT_KEY = "cs77_publish_draft";
   const PUBLISH_DRAFT_SAVE_MS = 2000;
@@ -2673,12 +2674,15 @@
     accountState.loadedAt = 0;
   }
 
+  // One record for the signed-in user. Empty image is stored so the next
+  // login can show the satoshi fallback immediately.
   function readStoredProfileImage(user) {
+    if (!user) return null;
     try {
       const raw = localStorage.getItem(PROFILE_IMAGE_KEY);
       if (!raw) return null;
       const data = JSON.parse(raw);
-      if (!data || typeof data !== "object") return null;
+      if (!data || typeof data !== "object" || Array.isArray(data)) return null;
       if (String(data.user || "") !== user) return null;
       if (!Object.prototype.hasOwnProperty.call(data, "image")) return null;
       return String(data.image || "");
@@ -2688,10 +2692,11 @@
   }
 
   function writeStoredProfileImage(user, image) {
+    if (!user) return;
     try {
       localStorage.setItem(
         PROFILE_IMAGE_KEY,
-        JSON.stringify({ user, image: String(image || "") })
+        JSON.stringify({ user: String(user), image: String(image || "") })
       );
     } catch {
       /* ignore quota / private mode */
@@ -2722,11 +2727,16 @@
     return readStoredProfileImage(user);
   }
 
+  function avatarSrcFromImage(user, image, size) {
+    const large = size === "large";
+    if (image != null && !String(image).trim()) {
+      return large ? SESSION_AVATAR_DEFAULT_LARGE : SESSION_AVATAR_DEFAULT_SMALL;
+    }
+    return HiveMd.avatarUrl(user, large ? "large" : "small");
+  }
+
   function sessionAvatarSrc(user) {
-    const image = knownProfileImage(user);
-    if (image == null) return HiveMd.avatarUrl(user, "small");
-    if (!String(image).trim()) return SESSION_AVATAR_FALLBACK;
-    return HiveMd.avatarUrl(user, "small");
+    return avatarSrcFromImage(user, knownProfileImage(user), "small");
   }
 
   function ownAccountReady(name) {
@@ -6645,6 +6655,7 @@
     profileState.followed = false;
     profileState.pending = false;
     profileState.claimPending = false;
+    claimAnimToken += 1;
     profileState.wallet = null;
     profileState.walletTx = null;
   }
@@ -6752,7 +6763,7 @@
     const profileImage = String(
       (info && info.profile_image) || (profile && profile.profile_image) || ""
     ).trim();
-    const avatarSrc = profileImage ? HiveMd.avatarUrl(author, "large") : "/assets/satoshi.png";
+    const avatarSrc = avatarSrcFromImage(author, profileImage, "large");
     const about = String(
       (info && info.about) || (profile && profile.about) || ""
     ).trim();
@@ -6858,9 +6869,7 @@
     if (!banner) return;
     const img = banner.querySelector(".profile-head .avatar");
     if (img) {
-      const src = accountState.profileImage
-        ? HiveMd.avatarUrl(accountState.user, "large")
-        : "/assets/satoshi.png";
+      const src = avatarSrcFromImage(accountState.user, accountState.profileImage || "", "large");
       if (img.getAttribute("src") !== src) img.setAttribute("src", src);
     }
     const info = metadata && metadata.profile;
@@ -7309,7 +7318,7 @@
         <h2>Pending awards</h2>
         ${rows.join("")}
         <div class="wallet-row-actions wallet-claim-actions">
-          <button type="button" class="btn-primary btn-compact wallet-claim-btn"${profileState.claimPending ? " disabled" : ""}>${profileState.claimPending ? "Claiming…" : "Claim"}</button>
+          <button type="button" class="btn-primary btn-compact wallet-claim-btn">Claim</button>
         </div>
       </section>
     `;
@@ -7317,6 +7326,157 @@
 
   function formatAssetNumber(amount) {
     return formatGroupedNumber(amount, 3);
+  }
+
+  function applyClaimedRewards(wallet) {
+    const hive = Number(wallet.rewardHive) || 0;
+    const hbd = Number(wallet.rewardHbd) || 0;
+    const staked = Number(wallet.rewardVestingHive) || 0;
+    const vests = Number(wallet.rewardVests) || 0;
+    wallet.hive = roundAsset((Number(wallet.hive) || 0) + hive, 3);
+    wallet.hbd = roundAsset((Number(wallet.hbd) || 0) + hbd, 3);
+    wallet.stakedHive = roundAsset((Number(wallet.stakedHive) || 0) + staked, 3);
+    wallet.vestingShares = roundAsset((Number(wallet.vestingShares) || 0) + vests, 6);
+    wallet.availableVests = Math.max(0, wallet.vestingShares - (Number(wallet.delegatedVests) || 0));
+    wallet.rewardHive = 0;
+    wallet.rewardHbd = 0;
+    wallet.rewardVests = 0;
+    wallet.rewardVestingHive = 0;
+    wallet.rewardHiveStr = "0.000 HIVE";
+    wallet.rewardHbdStr = "0.000 HBD";
+    wallet.rewardVestsStr = "0.000000 VESTS";
+    wallet.hiveStr = formatChainAmount(wallet.hive, "HIVE", 3);
+    wallet.hbdStr = formatChainAmount(wallet.hbd, "HBD", 3);
+    const accounts = [];
+    if (wallet.account) accounts.push(wallet.account);
+    if (
+      accountState.account &&
+      accountState.account !== wallet.account &&
+      accountState.user === wallet.name
+    ) {
+      accounts.push(accountState.account);
+    }
+    for (let i = 0; i < accounts.length; i++) {
+      const account = accounts[i];
+      account.balance = wallet.hiveStr;
+      account.hbd_balance = wallet.hbdStr;
+      account.vesting_shares = formatChainAmount(wallet.vestingShares, "VESTS", 6);
+      account.reward_hive_balance = "0.000 HIVE";
+      account.reward_hbd_balance = "0.000 HBD";
+      account.reward_vesting_balance = "0.000000 VESTS";
+      account.reward_vesting_hive = "0.000 HIVE";
+    }
+  }
+
+  function paintWalletBalanceAmounts(wallet) {
+    const rows = view.querySelectorAll(".wallet-table tr");
+    for (let i = 0; i < rows.length; i++) {
+      const label = rows[i].querySelector(".wallet-label");
+      const value = rows[i].querySelector(".wallet-value");
+      if (!label || !value) continue;
+      const name = label.textContent.trim();
+      if (name === "hive") value.textContent = formatAssetNumber(wallet.hive);
+      else if (name === "staked hive") value.textContent = formatAssetNumber(wallet.stakedHive);
+      else if (name === "hbd") value.textContent = formatAssetNumber(wallet.hbd);
+    }
+  }
+
+  function walletBalanceTableRow(label) {
+    const rows = view.querySelectorAll(".wallet-table tr");
+    for (let i = 0; i < rows.length; i++) {
+      const name = rows[i].querySelector(".wallet-label");
+      if (name && name.textContent.trim() === label) return rows[i];
+    }
+    return null;
+  }
+
+  function rewardBalanceRows(wallet) {
+    const labels = [];
+    if ((Number(wallet.rewardHive) || 0) > 0) labels.push("hive");
+    if ((Number(wallet.rewardHbd) || 0) > 0) labels.push("hbd");
+    if ((Number(wallet.rewardVests) || 0) > 0) labels.push("staked hive");
+    const rows = [];
+    for (let i = 0; i < labels.length; i++) {
+      const row = walletBalanceTableRow(labels[i]);
+      if (row) rows.push(row);
+    }
+    return rows;
+  }
+
+  let claimAnimToken = 0;
+
+  function claimedBalanceTargets(wallet) {
+    return {
+      hive: roundAsset((Number(wallet.hive) || 0) + (Number(wallet.rewardHive) || 0), 3),
+      hbd: roundAsset((Number(wallet.hbd) || 0) + (Number(wallet.rewardHbd) || 0), 3),
+      stakedHive: roundAsset(
+        (Number(wallet.stakedHive) || 0) + (Number(wallet.rewardVestingHive) || 0),
+        3
+      ),
+    };
+  }
+
+  function countWalletBalances(from, to, ms, token) {
+    const fields = [
+      ["hive", from.hive, to.hive],
+      ["hbd", from.hbd, to.hbd],
+      ["staked hive", from.stakedHive, to.stakedHive],
+    ];
+    if (ms <= 0) {
+      paintWalletBalanceAmounts(to);
+      return;
+    }
+    const started = performance.now();
+    function frame(now) {
+      if (token !== claimAnimToken) return;
+      const t = Math.min(1, (now - started) / ms);
+      const eased = t === 1 ? 1 : 1 - Math.pow(1 - t, 2);
+      for (let i = 0; i < fields.length; i++) {
+        const fromValue = fields[i][1];
+        const toValue = fields[i][2];
+        if (fromValue === toValue) continue;
+        const row = walletBalanceTableRow(fields[i][0]);
+        const el = row && row.querySelector(".wallet-value");
+        if (!el || !el.isConnected) continue;
+        el.textContent = formatAssetNumber(t === 1 ? toValue : fromValue + (toValue - fromValue) * eased);
+      }
+      if (t < 1) requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function animateClaimAwards(wallet) {
+    const token = ++claimAnimToken;
+    const awards = view.querySelector(".wallet-awards");
+    const rows = rewardBalanceRows(wallet);
+    const from = {
+      hive: Number(wallet.hive) || 0,
+      hbd: Number(wallet.hbd) || 0,
+      stakedHive: Number(wallet.stakedHive) || 0,
+    };
+    const targets = claimedBalanceTargets(wallet);
+    if (!awards) {
+      applyClaimedRewards(wallet);
+      profileState.claimPending = false;
+      paintWalletBalanceAmounts(wallet);
+      return;
+    }
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const countMs = reduced ? 0 : 900;
+    awards.remove();
+    for (let i = 0; i < rows.length; i++) {
+      rows[i].classList.remove("is-reward-in");
+      void rows[i].offsetWidth;
+      rows[i].classList.add("is-reward-in");
+    }
+    applyClaimedRewards(wallet);
+    profileState.claimPending = false;
+    countWalletBalances(from, targets, countMs, token);
+    window.setTimeout(() => {
+      if (token !== claimAnimToken || profileState.wallet !== wallet) return;
+      for (let i = 0; i < rows.length; i++) rows[i].classList.remove("is-reward-in");
+      if (accountState.account && accountState.user === wallet.name) syncOwnProfileBanner();
+    }, countMs + (reduced ? 0 : 240));
   }
 
   function walletBalanceRow(label, amount, symbol, actionsHtml) {
@@ -7631,11 +7791,8 @@
     }
     if (!walletHasAwards(wallet) || profileState.claimPending) return;
     profileState.claimPending = true;
-    const btn = view.querySelector(".wallet-claim-btn");
-    if (btn) {
-      btn.disabled = true;
-      btn.textContent = "Claiming…";
-    }
+    const awards = view.querySelector(".wallet-awards");
+    showClaimPending(awards);
     const { promise } = ChainQueue.enqueue({
       username: user,
       key: "Posting",
@@ -7654,20 +7811,41 @@
     });
     promise
       .then(() => {
-        if (profileState.author !== name) return;
-        currentViewKey = "";
-        route();
+        if (profileState.wallet !== wallet) return;
+        animateClaimAwards(wallet);
       })
       .catch((err) => {
         if (profileState.author !== name) return;
         profileState.claimPending = false;
-        const claimBtn = view.querySelector(".wallet-claim-btn");
-        if (claimBtn) {
-          claimBtn.disabled = false;
-          claimBtn.textContent = "Claim";
+        const box = view.querySelector(".wallet-awards");
+        if (box) {
+          box.hidden = false;
+          restoreClaimButton(box);
         }
         showError(err.message || String(err));
       });
+  }
+
+  function showClaimPending(awards) {
+    const btn = awards && awards.querySelector(".wallet-claim-btn");
+    if (!btn) return;
+    const height = btn.getBoundingClientRect().height;
+    const status = document.createElement("span");
+    status.className = "wallet-claiming";
+    status.setAttribute("role", "status");
+    status.textContent = "claiming...";
+    if (height) status.style.height = height + "px";
+    btn.replaceWith(status);
+  }
+
+  function restoreClaimButton(awards) {
+    const status = awards && awards.querySelector(".wallet-claiming");
+    if (!status) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-primary btn-compact wallet-claim-btn";
+    btn.textContent = "Claim";
+    status.replaceWith(btn);
   }
 
   async function renderProfileFeed(author, page) {
@@ -7879,6 +8057,7 @@
       profileState.followed = profileFollowed(profile);
       profileState.pending = false;
       profileState.claimPending = false;
+      claimAnimToken += 1;
       profileState.wallet = null;
       profileState.walletTx = null;
       document.title = profilePageTitle(name, tab);

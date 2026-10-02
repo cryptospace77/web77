@@ -3172,6 +3172,55 @@ button.tag-suggest:hover {
   margin-top: 0.85rem;
 }
 
+.wallet-claiming {
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 0.15rem;
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: none;
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+  animation: wallet-claim-blink 1s ease-in-out infinite;
+}
+
+@keyframes wallet-claim-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wallet-claiming {
+    animation: none;
+  }
+}
+
+.wallet-table tr.is-reward-in .wallet-value {
+  animation: wallet-balance-receive 900ms ease;
+}
+
+@keyframes wallet-balance-receive {
+  0% {
+    color: #fff8c4;
+    text-shadow: 0 0 16px rgba(255, 225, 74, 0.75);
+  }
+  100% {
+    color: var(--yellow);
+    text-shadow: var(--glow-yellow);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wallet-table tr.is-reward-in .wallet-value {
+    animation: none;
+  }
+}
+
 .wallet-row {
   display: flex;
   flex-wrap: wrap;
