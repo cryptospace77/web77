@@ -108,19 +108,22 @@ a:hover {
   mask-image: radial-gradient(ellipse 72% 72% at 18% 84%, #000 0%, #000 28%, transparent 72%);
 }
 
-.scanlines {
-  position: fixed;
-  inset: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0, 0, 0, 0.08) 2px,
-    rgba(0, 0, 0, 0.08) 4px
-  );
-  pointer-events: none;
-  z-index: 1000;
-  opacity: 0.4;
+/* scanlines */
+.logo-wrap::before,
+.btn-primary::after {
+   content: "";
+   position: absolute;
+   inset: 0;
+   background: repeating-linear-gradient(
+     0deg,
+     transparent,
+     transparent 2px,
+     rgba(0, 0, 0, 0.08) 2px,
+     rgba(0, 0, 0, 0.08) 4px
+   );
+   pointer-events: none;
+   opacity: 0.4;
+   border-radius: inherit;
 }
 
 .app {
@@ -209,6 +212,7 @@ body.is-post-open .welcome-flyer {
 
 .logo-wrap {
   display: flex;
+  position: relative;
   align-items: center;
   gap: 1.25rem;
   text-decoration: none;
