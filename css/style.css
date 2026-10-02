@@ -3403,10 +3403,30 @@ button.tag-suggest:hover {
 
 .wallet-tx-time {
   display: block;
+  position: relative;
   margin-top: 0.2rem;
   font-family: var(--font-mono);
   font-size: 0.72rem;
   color: var(--gray);
+}
+
+.wallet-tx-time .session-stat-tip {
+  left: auto;
+  right: 0;
+  z-index: 8;
+  padding: 0.28rem 0;
+}
+
+.wallet-tx-time:hover .session-stat-tip,
+.wallet-tx-time:focus-visible .session-stat-tip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.wallet-tx:has(.wallet-tx-time:hover),
+.wallet-tx:has(.wallet-tx-time:focus-visible) {
+  position: relative;
+  z-index: 8;
 }
 
 a.wallet-tx-time {
@@ -4253,6 +4273,11 @@ a.publish-fab:hover {
 
   .wallet-tx-side {
     text-align: left;
+  }
+
+  .wallet-tx-time .session-stat-tip {
+    left: 0;
+    right: auto;
   }
 
   .wallet-row-actions {

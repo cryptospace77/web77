@@ -520,6 +520,13 @@
     }
   }
 
+  function formatCreatedUtc(created) {
+    const ts = parseCreatedTs(created);
+    if (!Number.isFinite(ts)) return "";
+    const iso = new Date(ts).toISOString();
+    return iso.slice(0, 10) + " " + iso.slice(11, 19) + " UTC";
+  }
+
   function metaTimeHtml(created, href) {
     const rel = timeAgo(created);
     if (!rel) return "";
@@ -7291,11 +7298,15 @@
     const detail = walletTxDetail(type, payload);
     const memo = walletTxMemo(type, payload);
     const when = rec.timestamp ? timeAgo(rec.timestamp) : "";
+    const abs = rec.timestamp ? formatCreatedUtc(rec.timestamp) : "";
+    const pop = abs
+      ? `<span class="session-stat-tip" role="tooltip">${HiveMd.escapeHtml(abs)}</span>`
+      : "";
     const txUrl = walletTxUrl(rec);
     const timeHtml = when
       ? txUrl
-        ? `<a class="wallet-tx-time" href="${HiveMd.escapeHtml(txUrl)}" target="_blank" rel="noopener noreferrer">${HiveMd.escapeHtml(when)}</a>`
-        : `<span class="wallet-tx-time">${HiveMd.escapeHtml(when)}</span>`
+        ? `<a class="wallet-tx-time" href="${HiveMd.escapeHtml(txUrl)}" target="_blank" rel="noopener noreferrer">${HiveMd.escapeHtml(when)}${pop}</a>`
+        : `<span class="wallet-tx-time">${HiveMd.escapeHtml(when)}${pop}</span>`
       : "";
     return `<div class="wallet-tx">
       <div class="wallet-tx-main">
