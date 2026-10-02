@@ -86,6 +86,7 @@
   };
   const postSnaps = new Map();
   const cardContentStamps = new Map();
+  const originalPostCache = new Map();
   const revealedMuted = new Set();
   const POST_SNAP_MAX = 6;
   const communityState = {
@@ -4714,6 +4715,7 @@
         }
 
         let added = 0;
+        const incoming = [];
         for (const post of batch) {
           if (!isRootPost(post)) continue;
           const key = `${post.author}/${post.permlink}`;
@@ -4721,7 +4723,12 @@
           feedState.seen.add(key);
           added++;
           if (isBlacklistedPost(post)) continue;
-          feedState.items.push(post);
+          incoming.push(post);
+        }
+        await resolveCrossPosts(incoming);
+        for (let i = 0; i < incoming.length; i++) {
+          if (!keepHydratedPost(incoming[i])) continue;
+          feedState.items.push(incoming[i]);
         }
 
         const last = batch[batch.length - 1];
@@ -4778,46 +4785,201 @@
     return `<span class="${cls}">${HiveMd.escapeHtml(title)}</span>`;
   }
 
+  function originalCacheKey(author, permlink) {
+    return (
+      String(author || "")
+        .replace(/^@/, "")
+        .toLowerCase() +
+      "/" +
+      String(permlink || "").toLowerCase()
+    );
+  }
+
+  function crossPostRef(post) {
+    if (!post) return null;
+    const meta = HiveMd.parseJsonMetadata(post.json_metadata);
+    const author = String(meta.original_author || "")
+      .replace(/^@/, "")
+      .trim();
+    const permlink = String(meta.original_permlink || "").trim();
+    if (!author || !permlink) return null;
+    if (samePostId(post, author, permlink)) return null;
+    const tags = Array.isArray(meta.tags) ? meta.tags : [];
+    const first = String(tags[0] || "")
+      .replace(/^#/, "")
+      .trim()
+      .toLowerCase();
+    if (first === "cross-post") return { author, permlink };
+    const body = String(post.body || "").trim();
+    if (/^this is a cross post of\b/i.test(body)) return { author, permlink };
+    return null;
+  }
+
+  function cardDisplayPost(post) {
+    if (post && post.original_entry && post.original_entry.author && post.original_entry.permlink) {
+      return post.original_entry;
+    }
+    return post;
+  }
+
+  function rebloggerOf(post) {
+    let list = post && post.reblogged_by;
+    if (typeof list === "string" && list) list = [list];
+    if (!Array.isArray(list) || !list.length) {
+      const first = post && post.first_reblogged_by;
+      if (first) list = [first];
+      else return "";
+    }
+    const author = String((post && post.author) || "")
+      .replace(/^@/, "")
+      .toLowerCase();
+    for (let i = 0; i < list.length; i++) {
+      const name = String(list[i] || "")
+        .replace(/^@/, "")
+        .trim();
+      if (name && name.toLowerCase() !== author) return name;
+    }
+    return "";
+  }
+
+  function handleLinkHtml(name) {
+    const n = String(name || "").replace(/^@/, "");
+    if (!n) return "";
+    return `<a class="feed-share-user" href="${HiveMd.escapeHtml(profilePath(n))}">@${HiveMd.escapeHtml(n)}</a>`;
+  }
+
+  function isPinnedPost(post) {
+    if (!post) return false;
+    if (post.is_pinned) return true;
+    return Boolean(post.stats && post.stats.is_pinned);
+  }
+
+  function shareIconHtml(kind) {
+    let paths;
+    if (kind === "crosspost") {
+      paths = `<polygon points="21.4,12 16.8,20.2 7.2,20.2 2.6,12 7.2,3.8 16.8,3.8"/>`;
+    } else if (kind === "pin") {
+      paths = `<polygon points="12,2.6 18.8,9.4 12,21.4 5.2,9.4"/>
+           <polygon fill="currentColor" stroke="none" points="12,2.6 18.8,9.4 5.2,9.4"/>`;
+    } else {
+      paths = `<polyline points="5,12 5,4.4 18.2,4.4"/>
+           <polyline points="14.6,1.2 18.2,4.4 14.6,7.6"/>
+           <polyline points="19,12 19,19.6 5.8,19.6"/>
+           <polyline points="9.4,22.8 5.8,19.6 9.4,16.4"/>`;
+    }
+    return `<svg class="feed-share-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="miter" stroke-linecap="square">${paths}</g></svg>`;
+  }
+
+  function shareLineHtml(post) {
+    if (!post) return "";
+    const lines = [];
+    if (isPinnedPost(post)) {
+      lines.push(
+        `<span class="feed-share-line">${shareIconHtml("pin")}pinned</span>`
+      );
+    }
+    const reblogger = rebloggerOf(post);
+    if (reblogger) {
+      lines.push(
+        `<span class="feed-share-line">${shareIconHtml("reblog")}${handleLinkHtml(reblogger)} reblogged</span>`
+      );
+    }
+    if (crossPostRef(post)) {
+      const destName = communityNameOf(post);
+      const destTitle = (post && post.community_title) || destName;
+      let extra = "";
+      if (destName && destTitle) {
+        extra = ` to <a class="feed-share-community" href="${HiveMd.escapeHtml(
+          communityHref(destName)
+        )}">${HiveMd.escapeHtml(destTitle)}</a>`;
+      }
+      lines.push(
+        `<span class="feed-share-line">${shareIconHtml("crosspost")}${handleLinkHtml(post.author)} cross-posted${extra}</span>`
+      );
+    }
+    if (!lines.length) return "";
+    return `<p class="feed-share">${lines.join("")}</p>`;
+  }
+
+  function fetchOriginalPost(author, permlink) {
+    const key = originalCacheKey(author, permlink);
+    if (originalPostCache.has(key)) return originalPostCache.get(key);
+    const pending = HiveApi.getPost(author, permlink)
+      .then((post) => (post && post.author && post.permlink ? post : null))
+      .catch(() => null);
+    originalPostCache.set(key, pending);
+    return pending;
+  }
+
+  async function resolveCrossPosts(posts) {
+    const list = Array.isArray(posts) ? posts : [];
+    const jobs = [];
+    for (let i = 0; i < list.length; i++) {
+      const post = list[i];
+      if (!post || post.original_entry) continue;
+      const ref = crossPostRef(post);
+      if (!ref) continue;
+      jobs.push(
+        fetchOriginalPost(ref.author, ref.permlink).then((orig) => {
+          if (orig) post.original_entry = orig;
+        })
+      );
+    }
+    if (jobs.length) await Promise.all(jobs);
+  }
+
+  function keepHydratedPost(post) {
+    if (!post) return false;
+    const shown = cardDisplayPost(post);
+    if (shown && isBlacklistedPost(shown)) return false;
+    return true;
+  }
+
   function cardHtml(post) {
-    const authorAttr = HiveMd.escapeHtml(post.author);
-    const permlinkAttr = HiveMd.escapeHtml(post.permlink);
-    const community = communityLabelHtml(post);
-    const rep = Math.floor(HiveMd.displayReputation(post.author_reputation));
+    const shown = cardDisplayPost(post) || post;
+    const share = shareLineHtml(post);
+    const authorAttr = HiveMd.escapeHtml(shown.author);
+    const permlinkAttr = HiveMd.escapeHtml(shown.permlink);
+    const community = communityLabelHtml(shown);
+    const rep = Math.floor(HiveMd.displayReputation(shown.author_reputation));
     const meta = `
         <div class="card-meta">
-          ${authorLinkHtml(post.author, "small")}
+          ${authorLinkHtml(shown.author, "small")}
           <span class="meta-sep">·</span>
           <span>${rep}</span>
           ${community}
-          ${metaTimeHtml(post.created, postPath(post))}
+          ${metaTimeHtml(shown.created, postPath(shown))}
         </div>`;
-    if (isMutedHidden(post)) {
-      return `
+    let card;
+    if (isMutedHidden(shown)) {
+      card = `
       <article class="post-card is-muted" data-author="${authorAttr}" data-permlink="${permlinkAttr}">
         ${meta}
-        ${mutedNoticeHtml("post", post)}
+        ${mutedNoticeHtml("post", shown)}
       </article>
     `;
-    }
-    const img = HiveMd.extractImage(post);
-    const thumb = img
-      ? `<img class="card-thumb" src="${HiveMd.escapeHtml(HiveMd.proxyImage(img, 480))}" alt="">`
-      : "";
-    return `
+    } else {
+      const img = HiveMd.extractImage(shown);
+      const thumb = img
+        ? `<img class="card-thumb" src="${HiveMd.escapeHtml(HiveMd.proxyImage(img, 480))}" alt="">`
+        : "";
+      card = `
       <article class="post-card${img ? " has-image" : " no-thumb"}" data-author="${authorAttr}" data-permlink="${permlinkAttr}">
         ${meta}
-        <a class="card-hit" href="${HiveMd.escapeHtml(postPath(post))}">
-          <h2>${HiveMd.escapeHtml(post.title || "(untitled)")}</h2>
-          <p class="card-excerpt">${HiveMd.escapeHtml(HiveMd.excerpt(post, 200))}</p>
+        <a class="card-hit" href="${HiveMd.escapeHtml(postPath(shown))}">
+          <h2>${HiveMd.escapeHtml(shown.title || "(untitled)")}</h2>
+          <p class="card-excerpt">${HiveMd.escapeHtml(HiveMd.excerpt(shown, 200))}</p>
           ${thumb}
         </a>
         <div class="card-stats">
-          ${voteControlHtml(post, "pills")}
-          ${commentCountHtml(post.children, postPath(post))}
-          ${payoutHtml(post, true)}
+          ${voteControlHtml(shown, "pills")}
+          ${commentCountHtml(shown.children, postPath(shown))}
+          ${payoutHtml(shown, true)}
         </div>
       </article>
     `;
+    }
+    return `<div class="feed-item">${share}${card}</div>`;
   }
 
   function feedNavHtml(sort, tag) {
@@ -6074,7 +6236,11 @@
   function findLoadedPost(author, permlink) {
     const items = feedState.items || [];
     for (let i = 0; i < items.length; i++) {
-      if (samePostId(items[i], author, permlink)) return items[i];
+      const item = items[i];
+      if (samePostId(item, author, permlink)) return item;
+      if (item && item.original_entry && samePostId(item.original_entry, author, permlink)) {
+        return item;
+      }
     }
     if (samePostId(currentPost, author, permlink)) return currentPost;
     return null;
@@ -6431,7 +6597,7 @@
 
   function paintFeedCards(list, mapFn) {
     const items = feedState.items || [];
-    for (let i = 0; i < items.length; i++) rememberCardContent(items[i]);
+    for (let i = 0; i < items.length; i++) rememberCardContent(cardDisplayPost(items[i]));
     list.innerHTML = items.map(mapFn).join("");
   }
 
@@ -6484,8 +6650,9 @@
     const prev = cardContentStamps.get(cardContentKey(post.author, post.permlink));
     if (prev != null) return prev !== cardContentStamp(post);
     const item = findLoadedPost(post.author, post.permlink);
-    if (!item || item === post) return false;
-    return postContentEdited(item, post);
+    const shown = cardDisplayPost(item);
+    if (!shown || shown === post) return false;
+    return postContentEdited(shown, post);
   }
 
   function commentCountForReturn(post) {
@@ -6545,12 +6712,14 @@
   }
 
   function replaceFeedCard(card, post) {
+    const shown = cardDisplayPost(post);
     const html =
-      profileState.author && !isRootPost(post) ? profileCardHtml(post) : cardHtml(post);
+      profileState.author && !isRootPost(shown) ? profileCardHtml(post) : cardHtml(post);
     const wrap = document.createElement("div");
     wrap.innerHTML = String(html || "").trim();
     const next = wrap.firstElementChild;
-    if (next) card.replaceWith(next);
+    const root = (card && card.closest && card.closest(".feed-item")) || card;
+    if (next && root) root.replaceWith(next);
   }
 
   function patchFeedCardStats(card, post, commentCount) {
@@ -6573,21 +6742,22 @@
     const item = findLoadedPost(post.author, post.permlink);
     const card = findFeedCard(post.author, post.permlink);
     if (!item && !card) return;
+    const target = item ? cardDisplayPost(item) : null;
     const edited = cardContentChanged(post);
     const comments = commentCountForReturn(post);
-    if (item && item !== post) {
-      if (edited) copyPostContent(item, post);
-      copyPostStats(item, post, comments);
-    } else if (item) {
-      item.children = comments;
+    if (target && target !== post) {
+      if (edited) copyPostContent(target, post);
+      copyPostStats(target, post, comments);
+    } else if (target) {
+      target.children = comments;
     }
-    rememberCardContent(item && edited ? item : post);
+    rememberCardContent(target && edited ? target : post);
     if (!card) return;
     if (edited) {
       replaceFeedCard(card, item || post);
       return;
     }
-    patchFeedCardStats(card, post, comments);
+    patchFeedCardStats(card, target || post, comments);
   }
 
   function suspendPostLayer(opts) {
@@ -7041,7 +7211,7 @@
   }
 
   function profileCardHtml(post) {
-    if (isRootPost(post)) return cardHtml(post);
+    if (isRootPost(cardDisplayPost(post))) return cardHtml(post);
     const rootTitle = String((post && (post.root_title || post.title)) || "").trim();
     const title = rootTitle
       ? String((post && post.title) || "").trim() || "RE: " + rootTitle
@@ -8050,6 +8220,7 @@
             break;
           }
           let added = 0;
+          const incoming = [];
           for (const post of batch) {
             const key = `${post.author}/${post.permlink}`;
             if (feedState.seen.has(key)) continue;
@@ -8057,7 +8228,12 @@
             added++;
             if (sort === "posts" && !isRootPost(post)) continue;
             if (isBlacklistedPost(post)) continue;
-            feedState.items.push(post);
+            incoming.push(post);
+          }
+          await resolveCrossPosts(incoming);
+          for (let i = 0; i < incoming.length; i++) {
+            if (!keepHydratedPost(incoming[i])) continue;
+            feedState.items.push(incoming[i]);
           }
           const last = batch[batch.length - 1];
           if (

@@ -1651,6 +1651,52 @@ html.has-mouse .session-account:focus-within .session-account-menu {
   min-width: 0;
 }
 
+.feed-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.feed-share {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin: 0 0.2rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: var(--gray-dim);
+}
+
+.feed-share-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.feed-share-icon {
+  width: 1.15em;
+  height: 1.15em;
+  flex: 0 0 auto;
+  display: block;
+  overflow: visible;
+  color: inherit;
+  shape-rendering: geometricPrecision;
+}
+
+.feed-share a {
+  color: var(--gray);
+  text-shadow: none;
+}
+
+.feed-share a:hover {
+  color: var(--yellow);
+  text-shadow: var(--glow-yellow);
+}
+
 .post-card {
   display: flex;
   flex-direction: column;
