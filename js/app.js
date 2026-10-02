@@ -69,6 +69,9 @@
   let publishNavPushed = false;
   let currentViewKey = "";
   let initialPageLoad = true;
+  // Set for a click on the profile nav. route() clears it. Those switches
+  // keep the scroll position; session and logo links still go to the top.
+  let profileNavSwitch = false;
   let welcomeHold = false;
   let currentPost = null;
   const postLayer = {
@@ -2600,6 +2603,7 @@
     if (HASH_ROUTING) {
       if (href.startsWith("#/") || href === "#") return;
       e.preventDefault();
+      profileNavSwitch = Boolean(a.closest(".profile-nav"));
       navigate(appHref(hrefToPath(href)));
       return;
     }
@@ -2608,12 +2612,24 @@
       if (u.pathname === location.pathname && u.hash && !/^#\//.test(u.hash)) return;
       if (u.pathname === location.pathname && u.search === location.search && !u.hash) {
         e.preventDefault();
+        // Already on this profile section. Session and logo links still
+        // bring the page back to the top; profile-nav clicks do not.
+        if (
+          a.id === "logoProfileLink" ||
+          a.id === "logoWalletLink" ||
+          a.classList.contains("session-name") ||
+          a.closest("#sessionAccountMenu")
+        ) {
+          window.scrollTo(0, 0);
+        }
         return;
       }
       e.preventDefault();
+      profileNavSwitch = Boolean(a.closest(".profile-nav"));
       navigate(u.pathname + u.search + u.hash);
     } catch {
       e.preventDefault();
+      profileNavSwitch = Boolean(a.closest(".profile-nav"));
       navigate(href);
     }
   });
@@ -7849,6 +7865,7 @@
 
   async function renderProfileFeed(author, page) {
     const sort = page === "comments" ? "comments" : page === "replies" ? "replies" : "posts";
+    if (!profileRouteStill(author, sort)) return;
     resetFeed(sort, author);
     const emptyTitle =
       page === "comments" ? "No comments" : page === "replies" ? "No replies" : "No posts";
@@ -7858,16 +7875,16 @@
         : page === "replies"
           ? "Nobody has replied to this account yet."
           : "This account has no posts yet.";
-    view.insertAdjacentHTML(
-      "beforeend",
-      `
+    const feedShell = `
         <div id="feedList" class="feed"></div>
         <div id="feedStatus" class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading…</div>
         <div class="feed-actions">
           <button type="button" class="btn-primary" id="moreBtn" hidden>Load more</button>
         </div>
-      `
-    );
+      `;
+    const section = profileSectionEl();
+    if (section) section.insertAdjacentHTML("beforeend", feedShell);
+    else view.insertAdjacentHTML("beforeend", feedShell);
     const list = $("#feedList");
     const status = $("#feedStatus");
     const moreBtn = $("#moreBtn");
@@ -7961,6 +7978,7 @@
 
     moreBtn.addEventListener("click", fill);
     await fill();
+    if (profileRouteStill(author, sort)) releaseProfileSectionHold();
   }
 
   function profileRouteStill(name, tab) {
@@ -7977,6 +7995,77 @@
     const status = $("#profileSectionStatus");
     if (status) status.outerHTML = html;
     else view.insertAdjacentHTML("beforeend", html);
+  }
+
+  function profileSectionLoadingHtml() {
+    return `<div class="loading-row" id="profileSectionStatus"><span class="btn-loader" aria-hidden="true"></span> Loading…</div>`;
+  }
+
+  // The banner stays when this author is already on screen. A new profile
+  // still loads the account first, then the posts, comments, replies, or wallet.
+  function profileBannerReady(name) {
+    if (profileState.author !== name || !profileState.profile) return false;
+    const banner = view.querySelector(".profile-banner");
+    if (!banner || banner.classList.contains("community-banner")) return false;
+    return Boolean(view.querySelector(".profile-nav"));
+  }
+
+  function paintProfileNavActive(page) {
+    const nav = view.querySelector(".profile-nav");
+    if (!nav) return;
+    const ids = ["posts", "comments", "replies", "wallet"];
+    const links = nav.querySelectorAll("a");
+    for (let i = 0; i < links.length; i++) {
+      links[i].classList.toggle("is-active", ids[i] === page);
+    }
+  }
+
+  function clearProfileSection() {
+    const nav = view.querySelector(".profile-nav");
+    if (!nav) return;
+    let el = nav.nextElementSibling;
+    while (el) {
+      const next = el.nextElementSibling;
+      el.remove();
+      el = next;
+    }
+  }
+
+  function profileSectionEl() {
+    return document.getElementById("profileSection");
+  }
+
+  function releaseProfileSectionHold() {
+    const section = profileSectionEl();
+    if (section) section.style.minHeight = "";
+  }
+
+  function showProfileSectionLoading() {
+    let section = profileSectionEl();
+    if (!section) {
+      clearProfileSection();
+      view.insertAdjacentHTML(
+        "beforeend",
+        `<div id="profileSection">${profileSectionLoadingHtml()}</div>`
+      );
+      return;
+    }
+    // Keep the old section height so a short loader does not pull the page up.
+    const hold = section.offsetHeight;
+    section.innerHTML = profileSectionLoadingHtml();
+    if (hold > 40) section.style.minHeight = hold + "px";
+  }
+
+  async function renderProfileSection(name, tab, pageLoad) {
+    if (!profileRouteStill(name, tab)) return;
+    if (tab === "wallet") {
+      await fillProfileWallet(name, tab, pageLoad);
+      return;
+    }
+    const status = $("#profileSectionStatus");
+    if (status && profileRouteStill(name, tab)) status.remove();
+    if (!profileRouteStill(name, tab)) return;
+    await renderProfileFeed(name, tab);
   }
 
   // A page load reuses a fresh account snapshot, or waits for the boot load.
@@ -8008,11 +8097,13 @@
       profileSectionHtml(
         `<div class="wallet-page"><div class="panel empty-state"><h2>Wallet unavailable</h2><p>Could not load balances for this account.</p></div></div>`
       );
+      releaseProfileSectionHold();
       return;
     }
     profileState.wallet = wallet;
     profileState.walletTx = blankWalletTx();
     profileSectionHtml(walletPageHtml(wallet, isOwnAuthor(name)));
+    releaseProfileSectionHold();
     await loadMoreWalletHistory();
   }
 
@@ -8023,6 +8114,23 @@
       .toLowerCase();
     const tab = normalizeProfilePage(page) || "posts";
     const own = isOwnAuthor(name);
+    if (profileBannerReady(name)) {
+      profileState.page = tab;
+      profileState.claimPending = false;
+      claimAnimToken += 1;
+      profileState.wallet = null;
+      profileState.walletTx = null;
+      document.title = profilePageTitle(name, tab);
+      paintProfileNavActive(tab);
+      showProfileSectionLoading();
+      try {
+        await renderProfileSection(name, tab, pageLoad);
+      } catch (err) {
+        if (!profileRouteStill(name, tab)) return;
+        showError(err.message || String(err));
+      }
+      return;
+    }
     if (!(own && ownAccountReady(name))) {
       view.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading @${HiveMd.escapeHtml(name)}…</div>`;
     }
@@ -8062,27 +8170,18 @@
       document.title = profilePageTitle(name, tab);
       const chrome = profileBannerHtml(name, profile, power) + profileNavHtml(name, tab);
       if (!profileRouteStill(name, tab)) return;
-      view.innerHTML =
-        chrome +
-        `<div class="loading-row" id="profileSectionStatus"><span class="btn-loader" aria-hidden="true"></span> Loading…</div>`;
+      view.innerHTML = chrome + `<div id="profileSection">${profileSectionLoadingHtml()}</div>`;
 
       if (own && accountState.user === name && accountState.account) {
         HiveApi.getProfile(name, observer())
           .then((bridge) => {
-            if (!profileRouteStill(name, tab) || profileState.author !== name) return;
+            if (profileState.author !== name) return;
             applyOwnProfileSocial(bridge);
           })
           .catch(() => {});
       }
 
-      if (tab === "wallet") {
-        await fillProfileWallet(name, tab, pageLoad);
-        return;
-      }
-      const status = $("#profileSectionStatus");
-      if (status && profileRouteStill(name, tab)) status.remove();
-      if (!profileRouteStill(name, tab)) return;
-      await renderProfileFeed(name, tab);
+      await renderProfileSection(name, tab, pageLoad);
     } catch (err) {
       if (!profileRouteStill(name, tab)) return;
       resetProfileState();
@@ -8624,6 +8723,8 @@
   }
 
   async function route() {
+    const fromProfileNav = profileNavSwitch;
+    profileNavSwitch = false;
     closeLogoMenu();
     hideVoteSlider();
     clearError();
@@ -8702,7 +8803,7 @@
       return;
     }
 
-    window.scrollTo(0, 0);
+    if (!(fromProfileNav && r.name === "profile")) window.scrollTo(0, 0);
     if (r.name === "welcome") {
       document.title = "Crypto Space 77";
       await renderFeed("created", true, "");
@@ -8725,11 +8826,13 @@
       const canonical = pathForProfile(r.author, r.page);
       const here = currentPath().replace(/\/+$/, "") || "/";
       if (here !== canonical) {
+        profileNavSwitch = fromProfileNav;
         navigate(appHref(canonical), true);
         return;
       }
-      await renderProfile(r.author, r.page);
       currentViewKey = key;
+      await renderProfile(r.author, r.page);
+      if (routeKey(parseRoute()) === key) currentViewKey = key;
       return;
     }
     if (r.name === "community") {
