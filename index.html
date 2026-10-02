@@ -20,6 +20,7 @@
       communities: 1,
       publish: 1,
       welcome: 1,
+      about: 1,
       imprint: 1,
       c: 1,
     };
@@ -36,7 +37,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&family=Orbitron:wght@400;600;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=0.15.38">
+  <link rel="stylesheet" href="/css/style.css?v=0.15.41">
 </head>
 <body>
   <div class="bg-hex bg-hex-bl" aria-hidden="true"></div>
@@ -48,7 +49,7 @@
       <header class="header">
         <div class="logo-wrap" id="logoWrap">
           <div class="logo-menu" id="logoMenu">
-            <button type="button" class="logo-trigger" id="logoTrigger" aria-haspopup="true" aria-expanded="false" aria-controls="logoDropdown" aria-label="Open feed, tags, and communities">
+            <button type="button" class="logo-trigger" id="logoTrigger" aria-haspopup="true" aria-expanded="false" aria-controls="logoDropdown" aria-label="Open about, welcome, feed, tags, and communities">
               <svg class="app-logo" width="60" height="60" viewBox="0 0 128 128" role="img" aria-label="Crypto Space 77 hexagonal logo">
                 <polygon
                   points="108,64 86,102.11 42,102.11 20,64 42,25.89 86,25.89"
@@ -60,9 +61,8 @@
               </svg>
             </button>
             <div class="logo-dropdown" id="logoDropdown">
-              <nav class="logo-dropdown-panel" aria-label="Feed, tags, and communities">
-                <a class="logo-dropdown-link" id="logoProfileLink" href="#" hidden>Profile</a>
-                <a class="logo-dropdown-link" id="logoWalletLink" href="#" hidden>Wallet</a>
+              <nav class="logo-dropdown-panel" aria-label="About, welcome, feed, tags, and communities">
+                <a class="logo-dropdown-link" id="logoAboutLink" href="/about">About</a>
                 <a class="logo-dropdown-link" id="logoWelcomeLink" href="/welcome">Welcome</a>
                 <a class="logo-dropdown-link" id="logoFeedLink" href="/feed">Feed</a>
                 <a class="logo-dropdown-link" id="logoTagsLink" href="/tags">Tags</a>
@@ -280,6 +280,6 @@
   <script src="/js/hive-auth.js?v=0.15.1"></script>
   <script src="/js/chain-queue.js?v=0.15.1"></script>
   <script src="/js/blacklist.js?v=0.15.1"></script>
-  <script src="/js/app.js?v=0.15.63"></script>
+  <script src="/js/app.js?v=0.15.67"></script>
 </body>
 </html>

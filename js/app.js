@@ -2159,6 +2159,7 @@
     communities: true,
     publish: true,
     welcome: true,
+    about: true,
     imprint: true,
     c: true,
   };
@@ -2314,6 +2315,9 @@
     if (parts.length === 1 && first === "welcome") {
       return { name: "welcome" };
     }
+    if (parts.length === 1 && first === "about") {
+      return { name: "about" };
+    }
     if (parts.length === 1 && first === "imprint") {
       return { name: "imprint" };
     }
@@ -2384,6 +2388,7 @@
   function pathFromViewKey(key) {
     if (!key || key === "notfound") return "/";
     if (key === "welcome") return "/welcome";
+    if (key === "about") return "/about";
     if (key === "imprint") return "/imprint";
     if (key === "tags") return "/tags";
     if (key === "communities") return "/communities";
@@ -2694,8 +2699,6 @@
         // Already on this profile section. Session and logo links still
         // bring the page back to the top; profile-nav clicks do not.
         if (
-          a.id === "logoProfileLink" ||
-          a.id === "logoWalletLink" ||
           a.classList.contains("session-name") ||
           a.closest("#sessionAccountMenu")
         ) {
@@ -3534,9 +3537,7 @@
   }
 
   function paintLogoMenu() {
-    const user = observer();
-    const profile = $("#logoProfileLink");
-    const wallet = $("#logoWalletLink");
+    const about = $("#logoAboutLink");
     const welcome = $("#logoWelcomeLink");
     const feed = $("#logoFeedLink");
     const tags = $("#logoTagsLink");
@@ -3545,19 +3546,10 @@
     const favComms = $("#logoFavCommunities");
     const trigger = $("#logoTrigger");
     const panel = document.querySelector("#logoDropdown .logo-dropdown-panel");
-    const menuLabel = user
-      ? "Profile, wallet, welcome, feed, tags, and communities"
-      : "Welcome, feed, tags, and communities";
+    const menuLabel = "About, welcome, feed, tags, and communities";
     if (trigger) trigger.setAttribute("aria-label", "Open " + menuLabel.toLowerCase());
     if (panel) panel.setAttribute("aria-label", menuLabel);
-    if (profile) {
-      profile.hidden = !user;
-      if (user) profile.setAttribute("href", profileHref(user));
-    }
-    if (wallet) {
-      wallet.hidden = !user;
-      if (user) wallet.setAttribute("href", profileHref(user, "wallet"));
-    }
+    if (about) about.setAttribute("href", appHref("/about"));
     if (welcome) welcome.setAttribute("href", appHref("/welcome"));
     if (feed) feed.setAttribute("href", logoFeedHref());
     if (tags) tags.setAttribute("href", appHref("/tags"));
@@ -8937,12 +8929,35 @@
     }
   }
 
+  function renderAbout() {
+    document.title = "About — Crypto Space 77";
+    view.innerHTML = `
+      <section class="about">
+        <h2 class="about-title">About</h2>
+        <p>Crypto Space 77 is a lightweight and modern, open-source front-end for the hive blockchain, the world's first blockchain-powered, decentralized social network. The hive blockchain is a web3 ecosystem with zero transaction fees, built for social media and dapps.</p>
+        <h3>developed by</h3>
+        <div class="social-links about-social">
+          <a class="btn-social btn-social-red" href="${HiveMd.escapeHtml(appHref("/@vikisecrets"))}">@vikisecrets</a>
+          <a class="btn-social btn-social-yellow" href="https://vikisecrets.com/">vikisecrets.com</a>
+        </div>
+        <h3>social</h3>
+        <div class="social-links about-social">
+          <a class="btn-social btn-social-gray" href="${HiveMd.escapeHtml(appHref("/@cryptospace77"))}">hive</a>
+          <a class="btn-social btn-social-gray" href="https://x.com/cryptospace77x">X</a>
+          <a class="btn-social btn-social-gray" href="https://instagram.com/cryptospace77com">instagram</a>
+          <a class="btn-social btn-social-gray" href="https://github.com/cryptospace77">github</a>
+        </div>
+        <h3><a href="${HiveMd.escapeHtml(appHref("/imprint"))}">imprint</a></h3>
+      </section>
+    `;
+  }
+
   function renderImprint() {
     document.title = "Imprint — Crypto Space 77";
     view.innerHTML = `
       <section class="imprint">
         <h2 class="imprint-title">Imprint</h2>
-        <p>This is a local open-source web app running entirely in the user's browser. No data is stored or processed on or by cryptospace77.com. The site does not use cookies.</p>
+        <p>This is a local open-source web app running entirely in the user's browser. No user data is stored or processed on or by cryptospace77.com. The site does not use cookies.</p>
         <p>Developed by DI Viktor Krammer<br>
         Vienna, Austria<br>
         in the European Union
@@ -9053,6 +9068,8 @@
       document.title = "Communities — Crypto Space 77";
     } else if (r.name === "welcome") {
       document.title = "Crypto Space 77";
+    } else if (r.name === "about") {
+      document.title = "About — Crypto Space 77";
     } else if (r.name === "imprint") {
       document.title = "Imprint — Crypto Space 77";
     }
@@ -9189,6 +9206,11 @@
     }
     if (r.name === "communities") {
       await renderCommunitiesPage();
+      currentViewKey = key;
+      return;
+    }
+    if (r.name === "about") {
+      renderAbout();
       currentViewKey = key;
       return;
     }

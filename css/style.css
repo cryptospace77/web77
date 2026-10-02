@@ -2265,10 +2265,12 @@ a.tag:hover {
   margin-bottom: 1rem;
 }
 
+.about,
 .imprint {
   padding-top: 0.35rem;
 }
 
+.about-title,
 .imprint-title {
   font-family: var(--font-serif);
   font-weight: 400;
@@ -2279,6 +2281,7 @@ a.tag:hover {
   margin: 0 0 1.25rem;
 }
 
+.about p,
 .imprint p {
   font-family: var(--font-body);
   font-size: 1.15rem;
@@ -2287,6 +2290,7 @@ a.tag:hover {
   margin: 0 0 1.15rem;
 }
 
+.about h3,
 .imprint h3 {
   font-family: var(--font-display);
   font-size: 0.72rem;
@@ -2294,9 +2298,13 @@ a.tag:hover {
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--yellow);
-  margin: 1.85rem 0 0.7rem;
+  margin: 1.85rem 0;
   padding-top: 1.25rem;
   border-top: 1px solid var(--border);
+}
+
+.about h3 a {
+  color: inherit;
 }
 
 .tags-fav-list,
@@ -4029,6 +4037,11 @@ a.publish-fab:hover {
   flex-wrap: wrap;
   justify-content: center;
   gap: 0.85rem;
+}
+
+.about .social-links {
+  justify-content: flex-start;
+  margin: 0 0 0.55rem;
 }
 
 .btn-social {
