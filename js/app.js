@@ -8095,6 +8095,19 @@
     return HiveApi.getWallet(name);
   }
 
+  function isMissingAccountError(err) {
+    const msg = (err && err.message) || String(err || "");
+    return /account does not exist|invalid account name/i.test(msg);
+  }
+
+  function showMissingProfile() {
+    resetProfileState();
+    clearError();
+    document.body.classList.remove("is-profile");
+    document.title = "Not found — Crypto Space 77";
+    view.innerHTML = notFoundHtml("Failed to load account.");
+  }
+
   async function fillProfileWallet(name, tab, pageLoad) {
     let wallet = null;
     try {
@@ -8160,12 +8173,16 @@
       }
       if (!profile) {
         const [bridge, hp] = await Promise.all([
-          HiveApi.getProfile(name, observer()).catch(() => null),
+          HiveApi.getProfile(name, observer()),
           HiveApi.getHivePower(name).catch(() => null),
         ]);
         if (!profileRouteStill(name, tab)) return;
         profile = bridge;
         power = hp;
+      }
+      if (!profile || !profile.name) {
+        showMissingProfile();
+        return;
       }
       setNodeLabel();
       clearError();
@@ -8195,6 +8212,10 @@
       await renderProfileSection(name, tab, pageLoad);
     } catch (err) {
       if (!profileRouteStill(name, tab)) return;
+      if (isMissingAccountError(err)) {
+        showMissingProfile();
+        return;
+      }
       resetProfileState();
       showError(err.message || String(err));
       view.innerHTML = notFoundHtml("Could not load this account.");

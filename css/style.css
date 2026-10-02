@@ -2996,10 +2996,12 @@ button.tag-suggest:hover {
 .is-profile .wallet-page,
 .is-profile .feed-actions,
 .is-profile .loading-row,
+.is-profile .empty-state,
 .is-community .feed-nav,
 .is-community .community-panel,
 .is-community .feed-actions,
-.is-community .loading-row {
+.is-community .loading-row,
+.is-community .empty-state {
   max-width: 600px;
   margin-left: auto;
   margin-right: auto;
