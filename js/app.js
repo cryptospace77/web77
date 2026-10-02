@@ -7017,7 +7017,7 @@
     if (!Number.isFinite(amount)) return "";
     if (sym === "VESTS") {
       const hive = HiveApi.vestsToHive(amount, props);
-      return formatHiveLike(hive, "hive");
+      return formatHiveLike(hive, "hp");
     }
     if (sym === "HIVE" || sym === "TESTS") return formatHiveLike(amount, "hive");
     if (sym === "HBD" || sym === "TBD") return formatHiveLike(amount, "hbd");
@@ -7050,7 +7050,7 @@
     delegate_vesting_shares: "delegation",
     //author_reward: "author award",
     //curation_reward: "curation award",
-    comment_benefactor_reward: "benefactor award",
+    //comment_benefactor_reward: "benefactor award",
     interest: "hbd interest",
   };
 
