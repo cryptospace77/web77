@@ -2728,11 +2728,10 @@
   }
 
   function avatarSrcFromImage(user, image, size) {
-    const large = size === "large";
     if (image != null && !String(image).trim()) {
-      return large ? SESSION_AVATAR_DEFAULT_LARGE : SESSION_AVATAR_DEFAULT_SMALL;
+      return (size === "large") ? SESSION_AVATAR_DEFAULT_LARGE : SESSION_AVATAR_DEFAULT_SMALL;
     }
-    return HiveMd.avatarUrl(user, large ? "large" : "small");
+    return HiveMd.avatarUrl(user, size);
   }
 
   function sessionAvatarSrc(user) {
@@ -6796,8 +6795,8 @@
             ${profileDetailsHtml(profile)}
             <div class="profile-stats">
               <span class="profile-post-count">${posts} posts</span>
-              <span class="profile-follower-count">${statsPending ? "…" : followers + " followers"}</span>
-              <span class="profile-following-count">${statsPending ? "…" : following + " following"}</span>
+              <span class="profile-follower-count">${statsPending ? "… followers" : followers + " followers"}</span>
+              <span class="profile-following-count">${statsPending ? "… following" : following + " following"}</span>
               ${hp ? `<span class="profile-hp">${HiveMd.escapeHtml(hp)}</span>` : ""}
               ${profileJoinedHtml(profile && profile.created)}
             </div>
