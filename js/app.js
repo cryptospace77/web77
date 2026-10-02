@@ -1952,6 +1952,18 @@
     return rep > 20;
   }
 
+  function isBlacklistedUser(name) {
+    return typeof Cs77Blacklist !== "undefined" && Cs77Blacklist.user(name);
+  }
+
+  function isBlacklistedPost(post, permlink) {
+    if (typeof Cs77Blacklist === "undefined") return false;
+    if (post && typeof post === "object") {
+      return Cs77Blacklist.post(post.author, post.permlink);
+    }
+    return Cs77Blacklist.post(post, permlink);
+  }
+
   function isRootPost(post) {
     if (!post || typeof post !== "object") return false;
     const parent = post.parent_author;
@@ -4650,6 +4662,7 @@
           feedState.seen.add(key);
           added++;
           if (post.stats && post.stats.hide) continue;
+          if (isBlacklistedPost(post)) continue;
           if (personal || tag || passesFeedFilter(post)) feedState.items.push(post);
         }
 
@@ -5510,6 +5523,7 @@
 
   function renderComment(node) {
     if (!node) return "";
+    if (isBlacklistedPost(node)) return "";
     rememberContent(node);
     const body = HiveMd.renderMarkdown(node.body || "");
     const replies = (node._replies || []).map(renderComment).join("");
@@ -5998,7 +6012,10 @@
     const replies = node && node._replies;
     if (!Array.isArray(replies) || !replies.length) return 0;
     let n = 0;
-    for (let i = 0; i < replies.length; i++) n += 1 + countThreadedReplies(replies[i]);
+    for (let i = 0; i < replies.length; i++) {
+      if (isBlacklistedPost(replies[i])) continue;
+      n += 1 + countThreadedReplies(replies[i]);
+    }
     return n;
   }
 
@@ -6014,6 +6031,7 @@
       return Object.values(discussion).filter((node) => {
         if (!node || !node.author || !node.permlink) return false;
         if (Number(node.depth) === 0) return false;
+        if (isBlacklistedPost(node)) return false;
         if (!self) return true;
         const key = String(node.author).toLowerCase() + "/" + String(node.permlink).toLowerCase();
         return key !== self;
@@ -6583,6 +6601,19 @@
     const pv = postViewEl();
     if (!layer || !pv) {
       view.innerHTML = notFoundHtml("Could not open this post.");
+      return;
+    }
+
+    if (isBlacklistedPost(a, p)) {
+      if (postLayer.open) rememberPostSnap();
+      postLayer.gen += 1;
+      postLayer.author = a;
+      postLayer.permlink = p;
+      currentPost = null;
+      document.title = "Not found — Crypto Space 77";
+      paintPostMessage(notFoundHtml("This post was blacklisted."));
+      revealPostLayer();
+      scrollWindowInstant(0);
       return;
     }
 
@@ -7933,6 +7964,7 @@
             added++;
             if (sort === "posts" && !isRootPost(post)) continue;
             if (post.stats && post.stats.hide) continue;
+            if (isBlacklistedPost(post)) continue;
             feedState.items.push(post);
           }
           const last = batch[batch.length - 1];
@@ -8100,12 +8132,12 @@
     return /account does not exist|invalid account name/i.test(msg);
   }
 
-  function showMissingProfile() {
+  function showMissingProfile(msg) {
     resetProfileState();
     clearError();
     document.body.classList.remove("is-profile");
     document.title = "Not found — Crypto Space 77";
-    view.innerHTML = notFoundHtml("Failed to load account.");
+    view.innerHTML = notFoundHtml(msg || "Failed to load account.");
   }
 
   async function fillProfileWallet(name, tab, pageLoad) {
@@ -8136,6 +8168,10 @@
     const name = String(author || "")
       .replace(/^@/, "")
       .toLowerCase();
+    if (isBlacklistedUser(name)) {
+      showMissingProfile("This user was blacklisted.");
+      return;
+    }
     const tab = normalizeProfilePage(page) || "posts";
     const own = isOwnAuthor(name);
     if (profileBannerReady(name)) {
