@@ -227,9 +227,6 @@
   }
 
   function signingLabel(kind) {
-    if (window.HiveAuth && HiveAuth.hasKey(observer())) {
-      return kind === "image" ? "Signing image…" : "Publishing…";
-    }
     return kind === "image"
       ? "Signing image…"
       : "Publishing……";
