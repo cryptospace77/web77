@@ -297,6 +297,7 @@
   }
 
   async function getRankedPosts({ sort, tag, limit, startAuthor, startPermlink, observer }) {
+    if (sort == "latest") sort="created";
     const params = {
       sort: sort || "created",
       tag: tag || "",

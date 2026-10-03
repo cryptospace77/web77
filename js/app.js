@@ -13,7 +13,7 @@
   const KEYCHAIN_USER_KEY = "cs77_keychain_user";
   const KEYCHAIN_PERSIST_KEY = "cs77_keychain_persist";
   const FEED_VIEW_KEY = "cs77_feed_view";
-  const FEED_SORTS = ["feed", "created", "trending", "hot"];
+  const FEED_SORTS = ["feed", "latest", "trending"];
   const VOTE_WEIGHT_KEYS = {
     post: "cs77_vote_weight_post",
     comment: "cs77_vote_weight_comment",
@@ -144,7 +144,7 @@
   };
 
   const feedState = {
-    sort: "created",
+    sort: "latest",
     tag: "",
     items: [],
     seen: new Set(),
@@ -2762,7 +2762,7 @@
     if (parts[0] === "index.html") parts.shift();
 
     if (parts.length === 0) {
-      return { name: "feed", sort: "created", tag: "" };
+      return { name: "feed", sort: "latest", tag: "" };
     }
 
     const first = parts[0].toLowerCase();
@@ -2799,7 +2799,7 @@
     }
 
     let sort = "";
-    if (first === "created" || first === "latest") sort = "created";
+    if (first === "created" || first === "latest") sort = "latest";
     else if (first === "feed") sort = "feed";
     else if (first === "trending" || first === "hot") sort = first;
 
@@ -2894,12 +2894,12 @@
     if (t) {
       if (sort === "trending") return "/trending/" + t;
       if (sort === "hot") return "/hot/" + t;
-      return "/created/" + t;
+      return "/latest/" + t;
     }
     if (sort === "feed") return "/feed";
     if (sort === "trending") return "/trending";
     if (sort === "hot") return "/hot";
-    if (sort === "created") return observer() ? "/latest" : "/";
+    if (sort === "latest") return observer() ? "/latest" : "/";
     return "/";
   }
 
@@ -2914,7 +2914,7 @@
   function tagChipHtml(tag) {
     const t = normalizeRouteTag(tag) || String(tag || "").replace(/^#/, "").trim().toLowerCase();
     if (!t) return "";
-    const href = isCommunityName(t) ? communityHref(t, "latest") : appHref("/created/" + t);
+    const href = isCommunityName(t) ? communityHref(t, "latest") : appHref("/latest/" + t);
     return `<a class="tag" href="${HiveMd.escapeHtml(href)}">#${HiveMd.escapeHtml(t)}</a>`;
   }
 
@@ -3025,7 +3025,7 @@
   }
 
   function defaultFeedSort() {
-    if (!observer()) return "created";
+    if (!observer()) return "latest";
     return readStoredFeedView() || "feed";
   }
 
@@ -5113,7 +5113,7 @@
 
   /* ─── Feed ─── */
   function resetFeed(sort, tag) {
-    feedState.sort = sort || "created";
+    feedState.sort = sort || "latest";
     feedState.tag = normalizeRouteTag(tag) || "";
     feedState.items = [];
     feedState.seen = new Set();
@@ -5471,7 +5471,7 @@
       items.push(["feed", "Feed", appHref("/feed")]);
     }
     items.push(
-      ["created", "Latest", appHref(pathForFeedSort("latest", t))],
+      ["latest", "Latest", appHref(pathForFeedSort("latest", t))],
       ["trending", "Trending", appHref(pathForFeedSort("trending", t))]    );
     const tagHead = t
       ? `<div class="tag-feed-head">
@@ -5559,7 +5559,7 @@
   function favoriteTagHref(tag) {
     const t = normalizeRouteTag(tag);
     if (!t) return appHref("/");
-    return appHref("/created/" + t);
+    return appHref("/latest/" + t);
   }
 
   function setTagsStatus(msg, isError) {
@@ -7484,7 +7484,7 @@
 
   function profileNavHtml(author, page) {
     const items = [
-      ["posts", "All posts", profileHref(author, "posts")],
+      ["posts", "Posts", profileHref(author, "posts")],
       ["comments", "Comments", profileHref(author, "comments")],
       ["replies", "Replies", profileHref(author, "replies")],
       ["wallet", "Wallet", profileHref(author, "wallet")],
@@ -9029,7 +9029,7 @@
 
   function communityNavHtml(name, page) {
     const items = [
-      ["created", "Latest", communityHref(name, "latest")],
+      ["latest", "Latest", communityHref(name, "latest")],
       ["trending", "Trending", communityHref(name, "trending")],
       ["rules", "Rules", communityHref(name, "rules")],
       ["members", "Members", communityHref(name, "members")],
@@ -9652,7 +9652,7 @@
     if (!(fromProfileNav && r.name === "profile")) window.scrollTo(0, 0);
     if (r.name === "welcome") {
       document.title = "Crypto Space 77";
-      await renderFeed("created", true, "");
+      await renderFeed("latest", true, "");
       currentViewKey = key;
       return;
     }
