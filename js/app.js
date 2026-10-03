@@ -5790,7 +5790,7 @@
     if (!list) return;
     const rows = readFavoriteCommunities();
     if (!rows.length) {
-      list.innerHTML = `<p class="feed-hint tags-empty">No favorite communities yet. Search below to add one.</p>`;
+      list.innerHTML = `<p class="feed-hint tags-empty">No favorite communities yet.</p>`;
       return;
     }
     list.innerHTML = rows.map((row) => communityDirRowHtml(row, "favorite")).join("");
