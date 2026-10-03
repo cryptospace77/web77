@@ -34,8 +34,8 @@
   const FAVORITE_COMMUNITIES_KEY = "cs77_favorite_communities";
   const WELCOME_SEEN_KEY = "cs77_welcome_seen";
   const PROFILE_IMAGE_KEY = "cs77_profile_image";
-  const SESSION_AVATAR_DEFAULT_LARGE = "/assets/satoshi.png";
-  const SESSION_AVATAR_DEFAULT_SMALL = "/assets/satoshi-small.png";
+  const AVATAR_DEFAULT_LARGE = "/assets/satoshi.png";
+  const AVATAR_DEFAULT_SMALL = "/assets/satoshi-small.png";
   const MAX_FAVORITE_COMMUNITIES = 40;
   const PUBLISH_DRAFT_KEY = "cs77_publish_draft";
   const PUBLISH_DRAFT_SAVE_MS = 2000;
@@ -563,6 +563,35 @@
 
   function commentAnchorId(author, permlink) {
     return "@" + String(author || "") + "/" + String(permlink || "");
+  }
+
+  function decodeHashFragment(hash) {
+    let raw = String(hash == null ? "" : hash);
+    if (!raw) return "";
+    if (raw.charAt(0) === "#") raw = raw.slice(1);
+    if (!raw || raw.charAt(0) === "/") return "";
+    try {
+      raw = decodeURIComponent(raw);
+    } catch {
+      /* keep raw */
+    }
+    return raw;
+  }
+
+  function parseCommentFragment(hash) {
+    const raw = decodeHashFragment(hash);
+    if (!raw) return null;
+    const m = raw.match(/^@([a-z0-9.\-]{3,16})\/([^#?\s]+)/i);
+    if (!m) return null;
+    const author = m[1].toLowerCase();
+    const permlink = m[2];
+    return { author, permlink, id: commentAnchorId(author, permlink) };
+  }
+
+  function commentHashFromLocation() {
+    if (HASH_ROUTING || /^#\//.test(location.hash || "")) return "";
+    const parsed = parseCommentFragment(location.hash);
+    return parsed ? "#" + parsed.id : "";
   }
 
   function commentPath(node) {
@@ -2548,19 +2577,24 @@
     return true;
   }
 
-  function scrollToAnchor(hash, behavior) {
-    const raw = String(hash == null ? location.hash : hash).replace(/^#/, "");
-    if (!raw || raw.charAt(0) === "/") return false;
-    if (raw === "comments") return scrollToComments(behavior);
-    let el = document.getElementById(raw);
-    if (!el) {
-      try {
-        el = document.getElementById(decodeURIComponent(raw));
-      } catch {
-        el = null;
-      }
-    }
+  function anchorElIsVisible(el) {
     if (!el) return false;
+    if (el.closest("[hidden]")) return false;
+    const layer = document.getElementById("postLayer");
+    if (layer && layer.contains(el) && (layer.hidden || !postLayer.open)) return false;
+    return true;
+  }
+
+  function scrollToAnchor(hash, behavior) {
+    const raw = decodeHashFragment(hash == null ? location.hash : hash);
+    if (!raw) return false;
+    if (raw === "comments") {
+      const el = document.getElementById("comments");
+      if (!anchorElIsVisible(el)) return false;
+      return scrollToComments(behavior);
+    }
+    const el = findCommentAnchorEl(hash == null ? location.hash : hash);
+    if (!anchorElIsVisible(el)) return false;
     return scrollTargetIntoView(el, behavior);
   }
 
@@ -3119,17 +3153,37 @@
     if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
     const href = a.getAttribute("href");
     const commentFrag = hashFragment(href);
-    if (commentFrag.startsWith("#@") && scrollToAnchor(commentFrag)) {
+    if (
+      parseCommentFragment(commentFrag) &&
+      (isInternalHref(href) || href.startsWith("#"))
+    ) {
       e.preventDefault();
-      if (!HASH_ROUTING) {
-        try {
-          const u = new URL(href, location.href);
-          if (u.pathname === location.pathname) {
+      try {
+        const u = new URL(href, location.href);
+        const samePage =
+          !HASH_ROUTING &&
+          u.pathname === location.pathname &&
+          u.search === location.search;
+        if (samePage && commentsAreShowing() && scrollToAnchor(commentFrag)) {
+          if (location.hash !== u.hash) {
             history.pushState(history.state, "", u.pathname + u.search + u.hash);
           }
-        } catch {
-          /* ignore */
+          return;
         }
+        if (samePage) {
+          if (location.hash !== u.hash) {
+            history.pushState(history.state, "", u.pathname + u.search + u.hash);
+          }
+          const pv = postViewEl();
+          settlePostAnchor(
+            { anchor: u.hash },
+            Boolean(pv && !htmlHasPendingComments(pv.innerHTML))
+          );
+          return;
+        }
+        navigate(u.pathname + u.search + u.hash);
+      } catch {
+        navigate(href);
       }
       return;
     }
@@ -3183,7 +3237,22 @@
     if (!HASH_ROUTING) route();
   });
   window.addEventListener("hashchange", () => {
-    if (HASH_ROUTING || /^#\//.test(location.hash || "")) route();
+    if (HASH_ROUTING || /^#\//.test(location.hash || "")) {
+      route();
+      return;
+    }
+    if (!postLayer.open) return;
+    if (location.hash === "#comments") {
+      settlePostAnchor({ jumpComments: true }, true);
+      return;
+    }
+    if (parseCommentFragment(location.hash)) {
+      const pv = postViewEl();
+      settlePostAnchor(
+        { anchor: location.hash },
+        Boolean(pv && !htmlHasPendingComments(pv.innerHTML))
+      );
+    }
   });
 
   /* ─── Session / login ─── */
@@ -3290,7 +3359,7 @@
 
   function avatarSrcFromImage(user, image, size) {
     if (image != null && !String(image).trim()) {
-      return (size === "large") ? SESSION_AVATAR_DEFAULT_LARGE : SESSION_AVATAR_DEFAULT_SMALL;
+      return (size === "large") ? AVATAR_DEFAULT_LARGE : AVATAR_DEFAULT_SMALL;
     }
     return HiveMd.avatarUrl(user, size);
   }
@@ -3509,7 +3578,11 @@
     if (community) return communityHref(community[1]);
     const at = raw.indexOf("@");
     if (at < 0) return "";
-    return appHref("/" + raw.slice(at));
+    const rest = raw.slice(at);
+    const hashIdx = rest.indexOf("#");
+    const pathPart = hashIdx >= 0 ? rest.slice(0, hashIdx) : rest;
+    const frag = hashIdx >= 0 ? rest.slice(hashIdx) : "";
+    return appHref("/" + pathPart) + (parseCommentFragment(frag) ? frag : hashFragment(frag));
   }
 
   function notificationActor(item) {
@@ -6295,6 +6368,40 @@
     return null;
   }
 
+  function findCommentAnchorEl(hash) {
+    const comments = document.getElementById("comments");
+    if (!comments) return null;
+    const parsed = parseCommentFragment(hash);
+    if (parsed) {
+      const author = parsed.author;
+      const permlink = String(parsed.permlink || "").toLowerCase();
+      const nodes = comments.querySelectorAll(".comment");
+      for (let i = 0; i < nodes.length; i++) {
+        const el = nodes[i];
+        if (
+          String(el.getAttribute("data-author") || "").toLowerCase() === author &&
+          String(el.getAttribute("data-permlink") || "").toLowerCase() === permlink
+        ) {
+          return el;
+        }
+      }
+      const byId = document.getElementById(parsed.id);
+      if (byId && comments.contains(byId)) return byId;
+    }
+    const raw = decodeHashFragment(hash);
+    if (!raw) return null;
+    let el = document.getElementById(raw);
+    if (!el) {
+      try {
+        el = document.getElementById(decodeURIComponent(raw));
+      } catch {
+        el = null;
+      }
+    }
+    if (el && comments.contains(el)) return el;
+    return null;
+  }
+
   function bumpCommentCount(delta) {
     const section = $("#comments");
     if (!section) return;
@@ -7296,11 +7403,11 @@
     }
   }
 
-  function armCommentJump() {
+  function armPostAnchorJump(getEl) {
     stopCommentJump();
     const layer = postLayerEl();
     const article = document.querySelector("#postView .article");
-    if (!layer || !article || typeof ResizeObserver !== "function") return;
+    if (!layer || !article || typeof getEl !== "function") return;
     const gen = postLayer.gen;
     let ignore = false;
     const onUser = () => {
@@ -7311,11 +7418,14 @@
     window.addEventListener("touchstart", onUser, { passive: true });
     const realign = () => {
       if (ignore || !postLayer.open || postLayer.gen !== gen) return;
-      scrollToComments("auto");
+      const el = getEl();
+      if (el) scrollTargetIntoView(el, "auto");
     };
-    const observer = new ResizeObserver(realign);
-    observer.observe(article);
-    postLayer.jumpObserver = observer;
+    if (typeof ResizeObserver === "function") {
+      const observer = new ResizeObserver(realign);
+      observer.observe(article);
+      postLayer.jumpObserver = observer;
+    }
     postLayer.jumpCleanup = () => {
       window.removeEventListener("wheel", onUser);
       window.removeEventListener("touchstart", onUser);
@@ -7324,19 +7434,34 @@
     article.querySelectorAll("img").forEach((img) => {
       if (!img.complete) img.addEventListener("load", realign, { once: true });
     });
+    requestAnimationFrame(realign);
   }
 
   function settlePostAnchor(opts, commentsReady) {
-    if (!opts || !postLayer.open) return;
-    if (opts.jumpComments) {
+    if (!postLayer.open) return;
+    const jumpComments =
+      Boolean(opts && opts.jumpComments) ||
+      (!HASH_ROUTING && location.hash === "#comments");
+    const anchor =
+      (opts && opts.anchor) || commentHashFromLocation();
+    if (jumpComments) {
       // The post can grow after the first paint (images, then the thread).
       // Keep the comments section in view until that settles, unless the
       // reader has already scrolled away.
       scrollToComments("auto");
-      armCommentJump();
+      armPostAnchorJump(() => document.getElementById("comments"));
       return;
     }
-    if (opts.anchor && commentsReady) scrollToAnchor(opts.anchor, "auto");
+    if (!anchor) return;
+    if (!commentsReady) return;
+    const target = () => findCommentAnchorEl(anchor);
+    if (target()) {
+      scrollToAnchor(anchor, "auto");
+      armPostAnchorJump(target);
+      return;
+    }
+    // Thread is in, but this reply may paint a tick later.
+    armPostAnchorJump(target);
   }
 
   async function presentPost(author, permlink, opts) {
@@ -7404,8 +7529,16 @@
     // "Opening post…" has no article yet. A cached card does, with a pending
     // comment list. Either one still needs the discussion.
     const pendingNow = !articleShown || htmlHasPendingComments(shown.innerHTML);
-    settlePostAnchor(options, !pendingNow);
-    if (!pendingNow) return;
+    const finishAnchor = (commentsReady) => {
+      requestAnimationFrame(() => {
+        if (!postStill(gen, a, p)) return;
+        settlePostAnchor(options, commentsReady);
+      });
+    };
+    if (!pendingNow) {
+      finishAnchor(true);
+      return;
+    }
 
     try {
       const discussion = await HiveApi.getDiscussion(a, p, observer());
@@ -7435,7 +7568,7 @@
         setCommentCount(count);
         fillCommentList(commentsHtml);
       }
-      settlePostAnchor(options, true);
+      finishAnchor(true);
     } catch (err) {
       if (!postStill(gen, a, p)) return;
       const msg = err.message || String(err);
@@ -9579,10 +9712,7 @@
       publishNavPushed = false;
       const jumpComments =
         pendingCommentsScroll || (!HASH_ROUTING && location.hash === "#comments");
-      const anchor =
-        !jumpComments && !HASH_ROUTING && location.hash && location.hash.charAt(1) === "@"
-          ? location.hash
-          : "";
+      const anchor = !jumpComments ? commentHashFromLocation() : "";
       pendingCommentsScroll = false;
       hidePublishOverlay();
       await presentPost(r.author, r.permlink, { jumpComments, anchor });
