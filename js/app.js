@@ -5779,7 +5779,6 @@
           <img class="avatar" src="${HiveMd.avatarUrl(rec.name, "small")}" alt="">
           <span class="community-row-text">
             <span class="community-row-title">${title}</span>
-            <span class="community-row-meta">${HiveMd.escapeHtml(meta.join(" · "))}</span>
           </span>
         </a>
         ${action}
