@@ -228,11 +228,11 @@
 
   function signingLabel(kind) {
     if (window.HiveAuth && HiveAuth.hasKey(observer())) {
-      return kind === "image" ? "Signing image…" : "Signing…";
+      return kind === "image" ? "Signing image…" : "Publishing…";
     }
     return kind === "image"
-      ? "Waiting for Keychain to sign image…"
-      : "Waiting for Keychain…";
+      ? "Signing image…"
+      : "Publishing……";
   }
 
   function isOwnAuthor(author) {
@@ -2711,7 +2711,7 @@
     const page = String(raw || "")
       .trim()
       .toLowerCase();
-    if (!page || page === "created" || page === "latest") return "created";
+    if (!page || page === "created" || page === "latest") return "latest";
     if (page === "trending" || page === "hot") return page;
     if (page === "rules" || page === "about") return "rules";
     if (page === "members" || page === "roles") return "members";
@@ -2721,7 +2721,7 @@
   function pathForCommunity(name, page) {
     const n = normalizeCommunityName(name);
     if (!n) return "/";
-    const p = normalizeCommunityPage(page) || "created";
+    const p = normalizeCommunityPage(page) || "latest";
     return "/c/" + n + "/" + p;
   }
 
@@ -2792,7 +2792,7 @@
       const community = normalizeCommunityName(parts[1]);
       if (!community) return { name: "notfound" };
       if (parts.length === 2) {
-        return { name: "community", community, page: "created" };
+        return { name: "community", community, page: "latest" };
       }
       if (parts.length === 3) {
         const page = normalizeCommunityPage(parts[2]);
@@ -2902,14 +2902,14 @@
     if (sort === "feed") return "/feed";
     if (sort === "trending") return "/trending";
     if (sort === "hot") return "/hot";
-    if (sort === "created") return observer() ? "/created" : "/";
+    if (sort === "created") return observer() ? "/latest" : "/";
     return "/";
   }
 
   function tagFeedHref(tag, sort) {
     const t = normalizeRouteTag(tag);
     if (!t) return appHref("/");
-    const s = sort === "hot" || sort === "trending" ? sort : "created";
+    const s = sort === "hot" || sort === "trending" ? sort : "latest";
     if (isCommunityName(t)) return communityHref(t, s);
     return appHref(pathForFeedSort(s, t));
   }
@@ -2917,7 +2917,7 @@
   function tagChipHtml(tag) {
     const t = normalizeRouteTag(tag) || String(tag || "").replace(/^#/, "").trim().toLowerCase();
     if (!t) return "";
-    const href = isCommunityName(t) ? communityHref(t, "created") : appHref("/created/" + t);
+    const href = isCommunityName(t) ? communityHref(t, "latest") : appHref("/created/" + t);
     return `<a class="tag" href="${HiveMd.escapeHtml(href)}">#${HiveMd.escapeHtml(t)}</a>`;
   }
 
@@ -4001,7 +4001,7 @@
   }
 
   function logoFeedHref() {
-    return appHref(pathForFeedSort(observer() ? "feed" : "created"));
+    return appHref(pathForFeedSort(observer() ? "feed" : "latest"));
   }
 
   function paintLogoMenu() {
@@ -5474,7 +5474,7 @@
       items.push(["feed", "Feed", appHref("/feed")]);
     }
     items.push(
-      ["created", "Latest", appHref(pathForFeedSort("created", t))],
+      ["created", "Latest", appHref(pathForFeedSort("latest", t))],
       ["trending", "Trending", appHref(pathForFeedSort("trending", t))]    );
     const tagHead = t
       ? `<div class="tag-feed-head">
@@ -9032,7 +9032,7 @@
 
   function communityNavHtml(name, page) {
     const items = [
-      ["created", "Latest", communityHref(name, "created")],
+      ["created", "Latest", communityHref(name, "latest")],
       ["trending", "Trending", communityHref(name, "trending")],
       ["rules", "Rules", communityHref(name, "rules")],
       ["members", "Members", communityHref(name, "members")],
@@ -9350,7 +9350,7 @@
 
   async function renderCommunity(name, page) {
     const id = normalizeCommunityName(name);
-    const tab = normalizeCommunityPage(page) || "created";
+    const tab = normalizeCommunityPage(page) || "latest";
     view.innerHTML = `<div class="loading-row"><span class="btn-loader" aria-hidden="true"></span> Loading community…</div>`;
     try {
       const info = await HiveApi.getCommunity(id, observer());
