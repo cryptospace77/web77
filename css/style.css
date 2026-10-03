@@ -2644,8 +2644,7 @@ a.tag:hover {
 .community-fav-btn {
   flex-shrink: 0;
   padding: 0.38rem 0.7rem;
-  border: 1px solid rgba(211, 211, 211, 0.28);
-  border-radius: 999px;
+  border: none;
   background: transparent;
   color: var(--gray);
   font-family: var(--font-display);
@@ -2660,7 +2659,6 @@ a.tag:hover {
 .community-fav-btn:hover,
 .community-fav-btn.is-saved {
   color: var(--yellow);
-  border-color: var(--yellow);
 }
 
 button.tag {
