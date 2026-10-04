@@ -1,14 +1,15 @@
 /**
  * Crypto Space 77 — main javascript for router, feed, post, comments, and page processing.
  */
+
+// filter low rep, honor mutes, api mod flags, cs77 blacklist
+let ENABLE_CONTENT_MODERATION = true;
+let FILTER_LOW_REP = 20;
 (function () {
   "use strict";
 
   const APP_ID = "cryptospace77.com";
   const APP_VERSION = "0.15";
-  /* filter low rep, honor mutes, api mod flags, cs77 blacklist */
-  let ENABLE_CONTENT_MODERATION = true;
-  const FILTER_LOW_REP = 20;
   const FEED_TARGET = 20;
   const MAX_PAGES_PER_LOAD = 12;
   const SESSION_KEY = "cs77_user";
