@@ -2831,9 +2831,9 @@
 
   function profileNavInViewport(rect) {
     const vh = window.innerHeight || document.documentElement.clientHeight || 0;
-    return rect.bottom > 0 && rect.top < vh;
+    return rect.top > 0 && rect.bottom < vh;
   }
-
+  
   function queueProfileNavScroll() {
     if (!pendingProfileNavScroll) return;
     const gen = ++profileNavScrollGen;
