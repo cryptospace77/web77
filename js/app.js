@@ -4092,7 +4092,7 @@
     const favComms = $("#logoFavCommunities");
     const trigger = $("#logoTrigger");
     const panel = document.querySelector("#logoDropdown .logo-dropdown-panel");
-    const menuLabel = "About, welcome, feed, tags, and communities";
+    const menuLabel = "welcome, feed, tags, communities, and about";
     if (trigger) trigger.setAttribute("aria-label", "Open " + menuLabel.toLowerCase());
     if (panel) panel.setAttribute("aria-label", menuLabel);
     if (about) about.setAttribute("href", appHref("/about"));
