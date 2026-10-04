@@ -75,6 +75,10 @@
   // Set for a click on the profile nav. route() clears it. Those switches
   // keep the scroll position; session and logo links still go to the top.
   let profileNavSwitch = false;
+  // Session-menu Comments / Replies / Wallet land on .profile-nav once the
+  // profile chrome is painted, and only if that nav is off-screen.
+  let pendingProfileNavScroll = false;
+  let profileNavScrollGen = 0;
   let welcomeHold = false;
   let currentPost = null;
   const postLayer = {
@@ -2786,6 +2790,129 @@
     return appHref(pathForProfile(author, page));
   }
 
+  function isSessionProfileSubLink(a) {
+    if (!a || !a.closest("#sessionAccountMenu")) return false;
+    const href = a.getAttribute("href");
+    if (!href) return false;
+    const r = parseRoute(hrefToPath(href));
+    if (!r || r.name !== "profile") return false;
+    const page = normalizeProfilePage(r.page);
+    return page === "comments" || page === "replies" || page === "wallet";
+  }
+
+  function profileNavEl() {
+    return (view && view.querySelector(".profile-nav")) || document.querySelector("#view .profile-nav");
+  }
+
+  function remPx() {
+    const fs = parseFloat(getComputedStyle(document.documentElement).fontSize);
+    return Number.isFinite(fs) && fs > 0 ? fs : 16;
+  }
+
+  function profileNavPainted() {
+    const nav = profileNavEl();
+    if (!nav) return null;
+    const rect = nav.getBoundingClientRect();
+    if (rect.height <= 0) return null;
+    return { nav, rect };
+  }
+
+  function profileFontsReady() {
+    return !document.fonts || document.fonts.status === "loaded";
+  }
+
+  function snapToProfileNav(rect) {
+    const y = window.scrollY || window.pageYOffset || 0;
+    const target = Math.max(0, y + rect.top - remPx());
+    if (Math.abs(y - target) <= 0.5) return false;
+    scrollWindowInstant(target);
+    return true;
+  }
+
+  function profileNavInViewport(rect) {
+    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    return rect.bottom > 0 && rect.top < vh;
+  }
+
+  function queueProfileNavScroll() {
+    if (!pendingProfileNavScroll) return;
+    const gen = ++profileNavScrollGen;
+    const begun = Date.now();
+    let lastBannerH = null;
+    let stable = 0;
+    let ro = null;
+
+    const stopWatch = () => {
+      if (!ro) return;
+      ro.disconnect();
+      ro = null;
+    };
+
+    const stop = () => {
+      stopWatch();
+      if (gen === profileNavScrollGen) pendingProfileNavScroll = false;
+    };
+
+    const watchBanner = () => {
+      if (ro || typeof ResizeObserver === "undefined" || !view) return;
+      const banner = view.querySelector(".profile-banner");
+      if (!banner) return;
+      ro = new ResizeObserver(() => {
+        if (gen !== profileNavScrollGen || !pendingProfileNavScroll) return;
+        stable = 0;
+        lastBannerH = null;
+      });
+      ro.observe(banner);
+    };
+
+    const decide = () => {
+      if (gen !== profileNavScrollGen || !pendingProfileNavScroll) {
+        stopWatch();
+        return;
+      }
+      const painted = profileNavPainted();
+      if (painted && !profileNavInViewport(painted.rect)) snapToProfileNav(painted.rect);
+      stop();
+    };
+
+    const tick = () => {
+      if (gen !== profileNavScrollGen || !pendingProfileNavScroll) {
+        stopWatch();
+        return;
+      }
+      const painted = profileNavPainted();
+      if (!painted) {
+        if (Date.now() - begun > 8000) {
+          stop();
+          return;
+        }
+        requestAnimationFrame(tick);
+        return;
+      }
+      watchBanner();
+      const banner = view && view.querySelector(".profile-banner");
+      const h = banner ? banner.getBoundingClientRect().height : 0;
+      if (lastBannerH != null && Math.abs(h - lastBannerH) < 0.5) stable += 1;
+      else stable = 0;
+      lastBannerH = h;
+      const ready = (profileFontsReady() || Date.now() - begun > 700) && stable >= 3;
+      if (ready || Date.now() - begun > 1600) {
+        decide();
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+
+    requestAnimationFrame(tick);
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(() => {
+        if (gen !== profileNavScrollGen || !pendingProfileNavScroll) return;
+        stable = 0;
+        lastBannerH = null;
+      });
+    }
+  }
+
   function parseRoute(pathname) {
     let path = pathname == null ? currentPath() : pathname;
     try {
@@ -3210,7 +3337,13 @@
         return;
       }
     }
+    if (isSessionProfileSubLink(a)) pendingProfileNavScroll = true;
     if (HASH_ROUTING) {
+      if (pendingProfileNavScroll && hrefToPath(href) === currentPath()) {
+        e.preventDefault();
+        queueProfileNavScroll();
+        return;
+      }
       if (href.startsWith("#/") || href === "#") return;
       e.preventDefault();
       profileNavSwitch = Boolean(a.closest(".profile-nav"));
@@ -3222,13 +3355,17 @@
       if (u.pathname === location.pathname && u.hash && !/^#\//.test(u.hash)) return;
       if (u.pathname === location.pathname && u.search === location.search && !u.hash) {
         e.preventDefault();
-        // Already on this profile section. Session and logo links still
-        // bring the page back to the top; profile-nav clicks do not.
+        // Already on this profile section. Session name / Profile still
+        // go to the top; Comments, Replies, and Wallet land on the nav.
         if (
           a.classList.contains("session-name") ||
           a.closest("#sessionAccountMenu")
         ) {
-          window.scrollTo(0, 0);
+          if (pendingProfileNavScroll) {
+            queueProfileNavScroll();
+          } else {
+            window.scrollTo(0, 0);
+          }
         }
         return;
       }
@@ -9031,6 +9168,7 @@
   }
 
   function showMissingProfile(msg) {
+    pendingProfileNavScroll = false;
     resetProfileState();
     clearError();
     document.body.classList.remove("is-profile");
@@ -9080,6 +9218,7 @@
       profileState.walletTx = null;
       document.title = profilePageTitle(name, tab);
       paintProfileNavActive(tab);
+      queueProfileNavScroll();
       showProfileSectionLoading();
       try {
         await renderProfileSection(name, tab, pageLoad);
@@ -9133,6 +9272,7 @@
       const chrome = profileBannerHtml(name, profile, power) + profileNavHtml(name, tab);
       if (!profileRouteStill(name, tab)) return;
       view.innerHTML = chrome + `<div id="profileSection">${profileSectionLoadingHtml()}</div>`;
+      queueProfileNavScroll();
 
       if (own && accountState.user === name && accountState.account) {
         HiveApi.getProfile(name, observer())
@@ -9721,6 +9861,13 @@
     clearError();
     quietSmartHeader();
     const r = parseRoute();
+    const pinToProfileNav =
+      pendingProfileNavScroll &&
+      r.name === "profile" &&
+      (normalizeProfilePage(r.page) === "comments" ||
+        normalizeProfilePage(r.page) === "replies" ||
+        normalizeProfilePage(r.page) === "wallet");
+    if (!pinToProfileNav) pendingProfileNavScroll = false;
     if (r.name === "post") {
       publishNavPushed = false;
       const jumpComments =
@@ -9789,10 +9936,17 @@
     hidePublishOverlay();
     if (sameView) {
       applyRouteTitle(r);
+      if (pinToProfileNav) queueProfileNavScroll();
       return;
     }
 
-    if (!(fromProfileNav && r.name === "profile")) window.scrollTo(0, 0);
+    if (!(fromProfileNav && r.name === "profile")) {
+      const stayOnProfile = pinToProfileNav && view.querySelector(".profile-nav");
+      if (!stayOnProfile) {
+        if (pinToProfileNav) scrollWindowInstant(0);
+        else window.scrollTo(0, 0);
+      }
+    }
     if (r.name === "welcome") {
       document.title = "Crypto Space 77";
       await renderFeed("latest", true, "");
