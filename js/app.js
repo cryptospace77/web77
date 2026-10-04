@@ -4320,9 +4320,19 @@
   function setAccountMenuOpen(open) {
     const account = $("#sessionAccount");
     if (!account) return;
+    if (open) account.classList.remove("is-dismissed");
     account.classList.toggle("is-open", Boolean(open));
     const name = account.querySelector(".session-name");
     if (name) name.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  function dismissAccountMenu() {
+    const account = $("#sessionAccount");
+    if (!account) return;
+    account.classList.add("is-dismissed");
+    setAccountMenuOpen(false);
+    const focused = document.activeElement;
+    if (focused && focused.closest && focused.closest("#sessionAccount")) focused.blur();
   }
 
   function bindSessionAccount() {
@@ -4338,7 +4348,9 @@
       closeNodeMenus();
       expanded(true);
     });
-    account.addEventListener("pointerleave", () => {
+    account.addEventListener("pointerleave", (e) => {
+      if (e.relatedTarget && account.contains(e.relatedTarget)) return;
+      account.classList.remove("is-dismissed");
       if (!hoverFine()) return;
       if (!account.classList.contains("is-open")) expanded(false);
     });
@@ -4378,15 +4390,19 @@
       }
       const account = $("#sessionAccount");
       const nameLink = e.target.closest(".session-name");
-      if (nameLink && account && account.contains(nameLink) && !hoverFine()) {
-        e.preventDefault();
-        const open = !account.classList.contains("is-open");
-        setSessionMenuOpen(false);
-        setAccountMenuOpen(open);
-        return;
+      if (nameLink && account && account.contains(nameLink)) {
+        if (!hoverFine()) {
+          e.preventDefault();
+          const open = !account.classList.contains("is-open");
+          setSessionMenuOpen(false);
+          setAccountMenuOpen(open);
+          return;
+        }
+        dismissAccountMenu();
       }
       if (e.target.closest(".session-account-link")) {
-        setAccountMenuOpen(false);
+        if (hoverFine()) dismissAccountMenu();
+        else setAccountMenuOpen(false);
         setSessionMenuOpen(false);
         const focused = document.activeElement;
         if (focused && focused.closest && focused.closest("#sessionAccount")) focused.blur();

@@ -741,6 +741,12 @@ html.has-mouse .session-account:focus-within .session-account-menu {
   display: block;
 }
 
+/* Username click loads the profile. Stay closed until the pointer leaves. */
+html.has-mouse .session-account.is-dismissed:hover .session-account-menu,
+html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu {
+  display: none;
+}
+
 .session-account.is-open .session-account-menu {
   display: block;
 }
