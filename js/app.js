@@ -2790,14 +2790,17 @@
     return appHref(pathForProfile(author, page));
   }
 
-  function isSessionProfileSubLink(a) {
-    if (!a || !a.closest("#sessionAccountMenu")) return false;
-    const href = a.getAttribute("href");
-    if (!href) return false;
-    const r = parseRoute(hrefToPath(href));
-    if (!r || r.name !== "profile") return false;
-    const page = normalizeProfilePage(r.page);
-    return page === "comments" || page === "replies" || page === "wallet";
+  function isSessionProfileSubLink(href) {
+    const raw =
+      typeof href === "string" ? href : href && href.getAttribute ? href.getAttribute("href") : "";
+    const user = observer();
+    if (!raw || !user) return false;
+    const path = hrefToPath(raw).replace(/\/+$/, "") || "/";
+    return (
+      path === pathForProfile(user, "comments") ||
+      path === pathForProfile(user, "replies") ||
+      path === pathForProfile(user, "wallet")
+    );
   }
 
   function profileNavEl() {
@@ -3300,7 +3303,9 @@
         return;
       }
     }
-    if (isSessionProfileSubLink(a)) pendingProfileNavScroll = true;
+    if (a.closest("#sessionAccountMenu") && isSessionProfileSubLink(href)) {
+      pendingProfileNavScroll = true;
+    }
     if (HASH_ROUTING) {
       if (href.startsWith("#/") || href === "#") return;
       e.preventDefault();
@@ -9183,6 +9188,7 @@
       document.title = profilePageTitle(name, tab);
       paintProfileNavActive(tab);
       showProfileSectionLoading();
+      queueProfileNavScroll();
       try {
         await renderProfileSection(name, tab, pageLoad);
       } catch (err) {
@@ -9823,12 +9829,15 @@
     clearError();
     quietSmartHeader();
     const r = parseRoute();
-    /* pin to profile-nav */
-    pendingProfileNavScroll =
-      r.name === "profile" &&
-      (normalizeProfilePage(r.page) === "comments" ||
-        normalizeProfilePage(r.page) === "replies" ||
-        normalizeProfilePage(r.page) === "wallet");
+    // Keep the session-menu flag only when this navigation lands on comments,
+    // replies, or wallet. Profile-nav switches keep the current scroll.
+    if (
+      fromProfileNav ||
+      !pendingProfileNavScroll ||
+      !isSessionProfileSubLink(currentPath())
+    ) {
+      pendingProfileNavScroll = false;
+    }
     if (r.name === "post") {
       publishNavPushed = false;
       const jumpComments =
@@ -9897,6 +9906,7 @@
     hidePublishOverlay();
     if (sameView) {
       applyRouteTitle(r);
+      if (pendingProfileNavScroll) queueProfileNavScroll();
       return;
     }
 
