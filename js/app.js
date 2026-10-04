@@ -6,8 +6,10 @@
 
   const APP_ID = "cryptospace77.com";
   const APP_VERSION = "0.15";
-  const FEED_TARGET = 20;
+  /* filter low rep, honor mutes, api mod flags, cs77 blacklist */
+  let ENABLE_CONTENT_MODERATION = true;
   const FILTER_LOW_REP = 20;
+  const FEED_TARGET = 20;
   const MAX_PAGES_PER_LOAD = 12;
   const SESSION_KEY = "cs77_user";
   const KEYCHAIN_USER_KEY = "cs77_keychain_user";
@@ -2458,7 +2460,7 @@
 
   function isModerated(node) {
     const stats = node && node.stats;
-    return Boolean(stats && (stats.gray || stats.hide));
+    return ENABLE_CONTENT_MODERATION && Boolean(stats && (stats.gray || stats.hide));
   }
 
   function isMutedRevealed(author, permlink) {
@@ -2470,6 +2472,7 @@
   }
 
   function isMutedHidden(node) {
+    if (!ENABLE_CONTENT_MODERATION) return false;
     if (!node || !node.author) return false;
     if (isOwnAuthor(node.author)) return false;
     if (isMutedRevealed(node.author, node.permlink)) return false;
@@ -2511,15 +2514,19 @@
   }
 
   function isBlacklistedUser(name) {
-    return typeof Cs77Blacklist !== "undefined" && Cs77Blacklist.user(name);
+    return ENABLE_CONTENT_MODERATION && typeof Cs77Blacklist !== "undefined" && Cs77Blacklist.user(name);
   }
 
   function isBlacklistedPost(post, permlink) {
-    if (typeof Cs77Blacklist === "undefined") return false;
-    if (post && typeof post === "object") {
-      return Cs77Blacklist.post(post.author, post.permlink);
+    if (ENABLE_CONTENT_MODERATION)
+    {
+      if (typeof Cs77Blacklist === "undefined") return false;
+      if (post && typeof post === "object") {
+        return Cs77Blacklist.post(post.author, post.permlink);
+      }
+      return Cs77Blacklist.post(post, permlink);
     }
-    return Cs77Blacklist.post(post, permlink);
+    else return false;
   }
 
   function isRootPost(post) {
