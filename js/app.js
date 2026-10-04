@@ -2551,6 +2551,7 @@
     if (!el) return false;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
     const chosen = behavior || (reduce.matches ? "auto" : "smooth");
+    quietSmartHeader();
     const layer = document.getElementById("postLayer");
     if (layer && postLayer.open && layer.contains(el)) {
       const top = Math.max(0, window.scrollY + el.getBoundingClientRect().top - 8);
@@ -7104,6 +7105,7 @@
       window.scrollTo(0, top);
     }
     root.scrollTop = top;
+    quietSmartHeader();
   }
 
   function setPostBackgroundHidden(hidden) {
@@ -7158,6 +7160,7 @@
     const layer = postLayerEl();
     if (!layer) return null;
     ensurePostHistory();
+    quietSmartHeader();
     armInstantScroll();
     closeWelcomeForPost();
     const active = document.activeElement;
@@ -7375,6 +7378,7 @@
     const bringWelcome = restore && postLayer.hadWelcome;
     postLayer.heldScroll = false;
     postLayer.hadWelcome = false;
+    quietSmartHeader();
     armInstantScroll();
     document.body.classList.remove("is-post-open");
     setPostBackgroundHidden(false);
@@ -9715,6 +9719,7 @@
     closeLogoMenu();
     hideVoteSlider();
     clearError();
+    quietSmartHeader();
     const r = parseRoute();
     if (r.name === "post") {
       publishNavPushed = false;
@@ -9881,6 +9886,8 @@
   let smartHeaderDir = 0;
   let smartHeaderShowGen = 0;
   let smartHeaderRevealPending = false;
+  let smartHeaderUser = false;
+  let smartHeaderUserTimer = 0;
 
   function siteHeaderEl() {
     return $("#siteHeader") || document.querySelector(".header");
@@ -9925,6 +9932,44 @@
     if (slot) slot.style.height = "";
     void header.offsetWidth;
     header.classList.remove("is-unhooking");
+  }
+
+  function quietSmartHeader() {
+    smartHeaderUser = false;
+    if (smartHeaderUserTimer) {
+      clearTimeout(smartHeaderUserTimer);
+      smartHeaderUserTimer = 0;
+    }
+    smartHeaderDir = 0;
+    releaseSmartHeader();
+    lastSmartHeaderY = scrollYNow();
+  }
+
+  function markSmartHeaderUser(e) {
+    if (e && e.type === "keydown") {
+      const k = e.key;
+      if (
+        k !== "ArrowUp" &&
+        k !== "ArrowDown" &&
+        k !== "PageUp" &&
+        k !== "PageDown" &&
+        k !== "Home" &&
+        k !== "End" &&
+        k !== " "
+      ) {
+        return;
+      }
+      const t = e.target;
+      if (t && t.closest && t.closest("input, textarea, select, [contenteditable]")) {
+        return;
+      }
+    }
+    smartHeaderUser = true;
+    if (smartHeaderUserTimer) clearTimeout(smartHeaderUserTimer);
+    smartHeaderUserTimer = setTimeout(() => {
+      smartHeaderUser = false;
+      smartHeaderUserTimer = 0;
+    }, 180);
   }
 
   function scheduleSmartHeaderReveal(header) {
@@ -9994,6 +10039,11 @@
       return;
     }
 
+    if (!smartHeaderUser) {
+      smartHeaderDir = 0;
+      return;
+    }
+
     smartHeaderDir += dy;
     /* smart header treshold */
     if (Math.abs(smartHeaderDir) < 32) return;
@@ -10007,6 +10057,9 @@
 
   function bindSmartHeader() {
     lastSmartHeaderY = scrollYNow();
+    window.addEventListener("wheel", markSmartHeaderUser, { passive: true, capture: true });
+    window.addEventListener("touchmove", markSmartHeaderUser, { passive: true, capture: true });
+    window.addEventListener("keydown", markSmartHeaderUser, { capture: true });
     window.addEventListener(
       "scroll",
       () => {
