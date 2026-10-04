@@ -2834,83 +2834,46 @@
     return rect.top > 0 && rect.bottom < vh;
   }
   
+  function profileSocialReady() {
+    const profile = profileFromAccountState?.();
+    return profile?.statsPending === false;
+  }
+   
   function queueProfileNavScroll() {
     if (!pendingProfileNavScroll) return;
-    const gen = ++profileNavScrollGen;
-    const begun = Date.now();
-    let lastBannerH = null;
-    let stable = 0;
-    let ro = null;
-
-    const stopWatch = () => {
-      if (!ro) return;
-      ro.disconnect();
-      ro = null;
-    };
-
-    const stop = () => {
-      stopWatch();
-      if (gen === profileNavScrollGen) pendingProfileNavScroll = false;
-    };
-
-    const watchBanner = () => {
-      if (ro || typeof ResizeObserver === "undefined" || !view) return;
-      const banner = view.querySelector(".profile-banner");
-      if (!banner) return;
-      ro = new ResizeObserver(() => {
-        if (gen !== profileNavScrollGen || !pendingProfileNavScroll) return;
-        stable = 0;
-        lastBannerH = null;
-      });
-      ro.observe(banner);
-    };
-
-    const decide = () => {
-      if (gen !== profileNavScrollGen || !pendingProfileNavScroll) {
-        stopWatch();
-        return;
-      }
-      const painted = profileNavPainted();
-      if (painted && !profileNavInViewport(painted.rect)) snapToProfileNav(painted.rect);
-      stop();
-    };
-
-    const tick = () => {
-      if (gen !== profileNavScrollGen || !pendingProfileNavScroll) {
-        stopWatch();
-        return;
-      }
-      const painted = profileNavPainted();
-      if (!painted) {
-        if (Date.now() - begun > 8000) {
-          stop();
-          return;
-        }
-        requestAnimationFrame(tick);
-        return;
-      }
-      watchBanner();
-      const banner = view && view.querySelector(".profile-banner");
-      const h = banner ? banner.getBoundingClientRect().height : 0;
-      if (lastBannerH != null && Math.abs(h - lastBannerH) < 0.5) stable += 1;
-      else stable = 0;
-      lastBannerH = h;
-      const ready = (profileFontsReady() || Date.now() - begun > 700) && stable >= 3;
-      if (ready || Date.now() - begun > 1600) {
-        decide();
-        return;
-      }
+     
+    const start = performance.now();
+     
+    function tick() {
+    if (!pendingProfileNavScroll) return;
+     
+    const nav = document.querySelector('.profile-stats');
+    if (!nav) {
       requestAnimationFrame(tick);
-    };
-
-    requestAnimationFrame(tick);
-    if (document.fonts && document.fonts.ready) {
-      document.fonts.ready.then(() => {
-        if (gen !== profileNavScrollGen || !pendingProfileNavScroll) return;
-        stable = 0;
-        lastBannerH = null;
-      });
+      return;
     }
+     
+    const elapsed = performance.now() - start;
+     
+    const fontsReady =
+      !document.fonts || document.fonts.status === 'loaded';
+     
+    const ready =
+      fontsReady &&
+      (profileSocialReady() || elapsed > 1000);
+     
+    if (!ready) {
+      requestAnimationFrame(tick);
+      return;
+    }
+     
+    pendingProfileNavScroll = false;
+    
+    const painted = profileNavPainted();
+    if (painted && !profileNavInViewport(painted.rect)) snapToProfileNav(painted.rect);
+    }
+     
+    requestAnimationFrame(tick);
   }
 
   function parseRoute(pathname) {
@@ -3339,11 +3302,6 @@
     }
     if (isSessionProfileSubLink(a)) pendingProfileNavScroll = true;
     if (HASH_ROUTING) {
-      if (pendingProfileNavScroll && hrefToPath(href) === currentPath()) {
-        e.preventDefault();
-        queueProfileNavScroll();
-        return;
-      }
       if (href.startsWith("#/") || href === "#") return;
       e.preventDefault();
       profileNavSwitch = Boolean(a.closest(".profile-nav"));
@@ -7934,6 +7892,12 @@
     }
     paintProfileChrome();
     paintProfileRep();
+    
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          queueProfileNavScroll();
+        });
+      });
   }
 
   function syncOwnProfileBanner() {
@@ -9218,7 +9182,6 @@
       profileState.walletTx = null;
       document.title = profilePageTitle(name, tab);
       paintProfileNavActive(tab);
-      queueProfileNavScroll();
       showProfileSectionLoading();
       try {
         await renderProfileSection(name, tab, pageLoad);
@@ -9272,7 +9235,6 @@
       const chrome = profileBannerHtml(name, profile, power) + profileNavHtml(name, tab);
       if (!profileRouteStill(name, tab)) return;
       view.innerHTML = chrome + `<div id="profileSection">${profileSectionLoadingHtml()}</div>`;
-      queueProfileNavScroll();
 
       if (own && accountState.user === name && accountState.account) {
         HiveApi.getProfile(name, observer())
@@ -9861,13 +9823,12 @@
     clearError();
     quietSmartHeader();
     const r = parseRoute();
-    const pinToProfileNav =
-      pendingProfileNavScroll &&
+    /* pin to profile-nav */
+    pendingProfileNavScroll =
       r.name === "profile" &&
       (normalizeProfilePage(r.page) === "comments" ||
         normalizeProfilePage(r.page) === "replies" ||
         normalizeProfilePage(r.page) === "wallet");
-    if (!pinToProfileNav) pendingProfileNavScroll = false;
     if (r.name === "post") {
       publishNavPushed = false;
       const jumpComments =
@@ -9936,14 +9897,13 @@
     hidePublishOverlay();
     if (sameView) {
       applyRouteTitle(r);
-      if (pinToProfileNav) queueProfileNavScroll();
       return;
     }
 
     if (!(fromProfileNav && r.name === "profile")) {
-      const stayOnProfile = pinToProfileNav && view.querySelector(".profile-nav");
+      const stayOnProfile = pendingProfileNavScroll && view.querySelector(".profile-nav");
       if (!stayOnProfile) {
-        if (pinToProfileNav) scrollWindowInstant(0);
+        if (pendingProfileNavScroll) scrollWindowInstant(0);
         else window.scrollTo(0, 0);
       }
     }
