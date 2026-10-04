@@ -4533,6 +4533,16 @@ a.publish-fab:hover {
     padding-right: 2.2rem;
   }
 
+  /* Account-menu comments, replies, and wallet. Cold loads keep the banner.
+     The profile page clears .app's top padding, so the nav takes that 1.5rem. */
+  body.is-account-sub .profile-banner:not(.community-banner) {
+    display: none;
+  }
+
+  body.is-account-sub .profile-nav {
+    padding-top: 1.5rem;
+  }
+
   .profile-banner::before {
     background-size: min(78vw, 420px) min(78vw, 420px);
   }

@@ -75,10 +75,12 @@
   // Set for a click on the profile nav. route() clears it. Those switches
   // keep the scroll position; session and logo links still go to the top.
   let profileNavSwitch = false;
-  // Session-menu Comments / Replies / Wallet land on .profile-nav once the
-  // profile chrome is painted, and only if that nav is off-screen.
-  let pendingProfileNavScroll = false;
-  let profileNavScrollGen = 0;
+  // Session-menu Comments / Replies / Wallet. Mobile hides the profile banner
+  // and scrolls to the top. Desktop scrolls to .profile-nav only when that
+  // nav is already painted and not fully in the viewport.
+  let accountMenuSubNav = false;
+  // Session-menu Profile shows the banner again. Profile-nav tabs keep it hidden.
+  let accountMenuProfile = false;
   let welcomeHold = false;
   let currentPost = null;
   const postLayer = {
@@ -2790,12 +2792,18 @@
     return appHref(pathForProfile(author, page));
   }
 
-  function isSessionProfileSubLink(href) {
+  function sessionProfilePath(href) {
     const raw =
       typeof href === "string" ? href : href && href.getAttribute ? href.getAttribute("href") : "";
     const user = observer();
-    if (!raw || !user) return false;
-    const path = hrefToPath(raw).replace(/\/+$/, "") || "/";
+    if (!raw || !user) return "";
+    return hrefToPath(raw).replace(/\/+$/, "") || "/";
+  }
+
+  function isSessionProfileSubLink(href) {
+    const path = sessionProfilePath(href);
+    const user = observer();
+    if (!path || !user) return false;
     return (
       path === pathForProfile(user, "comments") ||
       path === pathForProfile(user, "replies") ||
@@ -2803,80 +2811,67 @@
     );
   }
 
-  function profileNavEl() {
-    return (view && view.querySelector(".profile-nav")) || document.querySelector("#view .profile-nav");
+  function isSessionProfileLink(href) {
+    const path = sessionProfilePath(href);
+    const user = observer();
+    if (!path || !user) return false;
+    return path === pathForProfile(user);
   }
 
-  function remPx() {
-    const fs = parseFloat(getComputedStyle(document.documentElement).fontSize);
-    return Number.isFinite(fs) && fs > 0 ? fs : 16;
+  function profileSubMobile() {
+    return window.matchMedia("(max-width: 720px)").matches;
   }
 
-  function profileNavPainted() {
-    const nav = profileNavEl();
-    if (!nav) return null;
+  // "hide" collapses the banner on mobile. "show" removes that collapse.
+  // "keep" leaves it, so profile-nav Posts stays collapsed.
+  function syncAccountMenuBanner(mode) {
+    if (mode === "keep") return;
+    if (mode === "hide") {
+      if (profileSubMobile()) document.body.classList.add("is-account-sub");
+      return;
+    }
+    document.body.classList.remove("is-account-sub");
+  }
+
+  function accountBannerMode(r, fromAccountMenu, fromAccountProfile, fromProfileNav) {
+    if (fromAccountProfile) return "show";
+    if (fromAccountMenu) return "hide";
+    if (fromProfileNav && r && r.name === "profile") return "keep";
+    if (r && r.name === "profile" && document.body.classList.contains("is-account-sub")) {
+      const author = String(r.author || "")
+        .replace(/^@/, "")
+        .toLowerCase();
+      if (author && author === String(observer() || "").toLowerCase()) return "keep";
+    }
+    return "show";
+  }
+
+  // Desktop only, and only when .profile-nav is already painted. A 1rem gap
+  // matches the earlier snap. Off-screen means not fully inside the viewport.
+  function scrollProfileNavIntoView() {
+    const nav =
+      (view && view.querySelector(".profile-nav")) ||
+      document.querySelector("#view .profile-nav");
+    if (!nav) return;
     const rect = nav.getBoundingClientRect();
-    if (rect.height <= 0) return null;
-    return { nav, rect };
-  }
-
-  function profileFontsReady() {
-    return !document.fonts || document.fonts.status === "loaded";
-  }
-
-  function snapToProfileNav(rect) {
-    const y = window.scrollY || window.pageYOffset || 0;
-    const target = Math.max(0, y + rect.top - remPx());
-    if (Math.abs(y - target) <= 0.5) return false;
-    scrollWindowInstant(target);
-    return true;
-  }
-
-  function profileNavInViewport(rect) {
+    if (rect.height <= 0) return;
     const vh = window.innerHeight || document.documentElement.clientHeight || 0;
-    return rect.top > 0 && rect.bottom < vh;
+    if (rect.top > 0 && rect.bottom < vh) return;
+    const y = window.scrollY || window.pageYOffset || 0;
+    const fs = parseFloat(getComputedStyle(document.documentElement).fontSize);
+    const rem = Number.isFinite(fs) && fs > 0 ? fs : 16;
+    const target = Math.max(0, y + rect.top - rem);
+    if (Math.abs(y - target) <= 0.5) return;
+    scrollWindowInstant(target);
   }
-  
-  function profileSocialReady() {
-    const profile = profileFromAccountState?.();
-    return profile?.statsPending === false;
-  }
-   
-  function queueProfileNavScroll() {
-    if (!pendingProfileNavScroll) return;
-     
-    const start = performance.now();
-     
-    function tick() {
-    if (!pendingProfileNavScroll) return;
-     
-    const nav = document.querySelector('.profile-stats');
-    if (!nav) {
-      requestAnimationFrame(tick);
+
+  function settleAccountMenuSub() {
+    if (profileSubMobile()) {
+      scrollWindowInstant(0);
       return;
     }
-     
-    const elapsed = performance.now() - start;
-     
-    const fontsReady =
-      !document.fonts || document.fonts.status === 'loaded';
-     
-    const ready =
-      fontsReady &&
-      (profileSocialReady() || elapsed > 1000);
-     
-    if (!ready) {
-      requestAnimationFrame(tick);
-      return;
-    }
-     
-    pendingProfileNavScroll = false;
-    
-    const painted = profileNavPainted();
-    if (painted && !profileNavInViewport(painted.rect)) snapToProfileNav(painted.rect);
-    }
-     
-    requestAnimationFrame(tick);
+    if (view && view.querySelector(".profile-nav")) scrollProfileNavIntoView();
+    else scrollWindowInstant(0);
   }
 
   function parseRoute(pathname) {
@@ -3304,7 +3299,9 @@
       }
     }
     if (a.closest("#sessionAccountMenu") && isSessionProfileSubLink(href)) {
-      pendingProfileNavScroll = true;
+      accountMenuSubNav = true;
+    } else if (a.closest("#sessionAccountMenu") && isSessionProfileLink(href)) {
+      accountMenuProfile = true;
     }
     if (HASH_ROUTING) {
       if (href.startsWith("#/") || href === "#") return;
@@ -3319,13 +3316,20 @@
       if (u.pathname === location.pathname && u.search === location.search && !u.hash) {
         e.preventDefault();
         // Already on this profile section. Session name / Profile still
-        // go to the top; Comments, Replies, and Wallet land on the nav.
+        // go to the top. Comments, Replies, and Wallet use the account-menu
+        // subpage behavior.
         if (
           a.classList.contains("session-name") ||
           a.closest("#sessionAccountMenu")
         ) {
-          if (pendingProfileNavScroll) {
-            queueProfileNavScroll();
+          if (accountMenuSubNav) {
+            syncAccountMenuBanner("hide");
+            settleAccountMenuSub();
+            accountMenuSubNav = false;
+          } else if (accountMenuProfile) {
+            syncAccountMenuBanner("show");
+            accountMenuProfile = false;
+            window.scrollTo(0, 0);
           } else {
             window.scrollTo(0, 0);
           }
@@ -7897,12 +7901,6 @@
     }
     paintProfileChrome();
     paintProfileRep();
-    
-    requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          queueProfileNavScroll();
-        });
-      });
   }
 
   function syncOwnProfileBanner() {
@@ -9137,7 +9135,9 @@
   }
 
   function showMissingProfile(msg) {
-    pendingProfileNavScroll = false;
+    accountMenuSubNav = false;
+    accountMenuProfile = false;
+    document.body.classList.remove("is-account-sub");
     resetProfileState();
     clearError();
     document.body.classList.remove("is-profile");
@@ -9188,7 +9188,6 @@
       document.title = profilePageTitle(name, tab);
       paintProfileNavActive(tab);
       showProfileSectionLoading();
-      queueProfileNavScroll();
       try {
         await renderProfileSection(name, tab, pageLoad);
       } catch (err) {
@@ -9260,6 +9259,7 @@
       }
       resetProfileState();
       showError(err.message || String(err));
+      document.body.classList.remove("is-account-sub");
       view.innerHTML = notFoundHtml("Could not load this account.");
     }
   }
@@ -9829,15 +9829,16 @@
     clearError();
     quietSmartHeader();
     const r = parseRoute();
-    // Keep the session-menu flag only when this navigation lands on comments,
-    // replies, or wallet. Profile-nav switches keep the current scroll.
-    if (
-      fromProfileNav ||
-      !pendingProfileNavScroll ||
-      !isSessionProfileSubLink(currentPath())
-    ) {
-      pendingProfileNavScroll = false;
-    }
+    // Account-menu comments, replies, and wallet collapse the banner on mobile.
+    // Profile-nav tabs, including Posts, keep that collapse. Only account-menu
+    // Profile shows the banner again.
+    const fromAccountMenu =
+      accountMenuSubNav && !fromProfileNav && isSessionProfileSubLink(currentPath());
+    const fromAccountProfile =
+      accountMenuProfile && !fromProfileNav && isSessionProfileLink(currentPath());
+    if (!fromAccountMenu) accountMenuSubNav = false;
+    if (!fromAccountProfile) accountMenuProfile = false;
+    syncAccountMenuBanner(accountBannerMode(r, fromAccountMenu, fromAccountProfile, fromProfileNav));
     if (r.name === "post") {
       publishNavPushed = false;
       const jumpComments =
@@ -9906,16 +9907,17 @@
     hidePublishOverlay();
     if (sameView) {
       applyRouteTitle(r);
-      if (pendingProfileNavScroll) queueProfileNavScroll();
+      if (fromAccountMenu) {
+        settleAccountMenuSub();
+        accountMenuSubNav = false;
+      }
+      if (fromAccountProfile) accountMenuProfile = false;
       return;
     }
 
     if (!(fromProfileNav && r.name === "profile")) {
-      const stayOnProfile = pendingProfileNavScroll && view.querySelector(".profile-nav");
-      if (!stayOnProfile) {
-        if (pendingProfileNavScroll) scrollWindowInstant(0);
-        else window.scrollTo(0, 0);
-      }
+      if (fromAccountMenu) settleAccountMenuSub();
+      else window.scrollTo(0, 0);
     }
     if (r.name === "welcome") {
       document.title = "Crypto Space 77";
@@ -9944,6 +9946,8 @@
         return;
       }
       currentViewKey = key;
+      accountMenuSubNav = false;
+      accountMenuProfile = false;
       await renderProfile(r.author, r.page);
       if (routeKey(parseRoute()) === key) currentViewKey = key;
       return;
