@@ -3201,6 +3201,14 @@
     }
     if (toComments) pendingCommentsScroll = true;
     if (!isInternalHref(href)) return;
+    if (a.closest("#logoBrand")) {
+      const here = parseRoute();
+      if (here.name === "feed") {
+        e.preventDefault();
+        scrollActiveToTop();
+        return;
+      }
+    }
     if (HASH_ROUTING) {
       if (href.startsWith("#/") || href === "#") return;
       e.preventDefault();
@@ -9868,6 +9876,155 @@
     updateScrollTopBtn();
   }
 
+  let lastSmartHeaderY = 0;
+  let smartHeaderTick = 0;
+  let smartHeaderDir = 0;
+  let smartHeaderShowGen = 0;
+  let smartHeaderRevealPending = false;
+
+  function siteHeaderEl() {
+    return $("#siteHeader") || document.querySelector(".header");
+  }
+
+  function headerSlotEl() {
+    return $("#headerSlot") || document.querySelector(".header-slot");
+  }
+
+  function scrollYNow() {
+    return window.scrollY || window.pageYOffset || document.documentElement.scrollTop || 0;
+  }
+
+  function pageAllowsSmartHeader(headerH) {
+    const extra = Math.max((headerH || 0) * 2, 240);
+    return document.documentElement.scrollHeight > window.innerHeight + extra;
+  }
+
+  function syncSmartHeaderSlot() {
+    const header = siteHeaderEl();
+    const slot = headerSlotEl();
+    if (!header || !slot) return;
+    if (header.classList.contains("is-smart")) {
+      slot.style.height = header.offsetHeight + "px";
+    } else {
+      slot.style.height = "";
+    }
+  }
+
+  function releaseSmartHeader() {
+    const header = siteHeaderEl();
+    const slot = headerSlotEl();
+    smartHeaderShowGen += 1;
+    smartHeaderRevealPending = false;
+    if (!header) return;
+    if (!header.classList.contains("is-smart")) {
+      if (slot) slot.style.height = "";
+      return;
+    }
+    header.classList.add("is-unhooking");
+    header.classList.remove("is-shown", "is-smart");
+    if (slot) slot.style.height = "";
+    void header.offsetWidth;
+    header.classList.remove("is-unhooking");
+  }
+
+  function scheduleSmartHeaderReveal(header) {
+    const gen = ++smartHeaderShowGen;
+    smartHeaderRevealPending = true;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (gen !== smartHeaderShowGen) return;
+        smartHeaderRevealPending = false;
+        if (!header.classList.contains("is-smart")) return;
+        header.classList.add("is-shown");
+      });
+    });
+  }
+
+  function pinSmartHeader(show) {
+    const header = siteHeaderEl();
+    const slot = headerSlotEl();
+    if (!header || !slot) return;
+    const wasSmart = header.classList.contains("is-smart");
+    if (!wasSmart) {
+      // Snap to a fixed, hidden bar with transitions off. The in-flow header
+      // is already opacity 1; without this the first show has nothing to fade from.
+      slot.style.height = header.offsetHeight + "px";
+      header.classList.add("is-unhooking", "is-smart");
+      header.classList.remove("is-shown");
+      void header.offsetWidth;
+      header.classList.remove("is-unhooking");
+      if (show) scheduleSmartHeaderReveal(header);
+    } else if (show && !smartHeaderRevealPending) {
+      header.classList.add("is-shown");
+    }
+    if (!show) {
+      smartHeaderShowGen += 1;
+      smartHeaderRevealPending = false;
+      header.classList.remove("is-shown");
+      closeLogoMenu();
+      closeNodeMenus();
+      setSessionMenuOpen(false);
+      setAccountMenuOpen(false);
+    }
+    if (header.classList.contains("is-smart")) {
+      slot.style.height = header.offsetHeight + "px";
+    }
+  }
+
+  function updateSmartHeader() {
+    const header = siteHeaderEl();
+    if (!header) return;
+    const y = Math.max(0, scrollYNow());
+    const h = header.offsetHeight || 0;
+    const dy = y - lastSmartHeaderY;
+    lastSmartHeaderY = y;
+    const long = pageAllowsSmartHeader(h);
+    const atTop = y <= 2;
+    const past = y > h + 8;
+
+    if (atTop || !long) {
+      releaseSmartHeader();
+      smartHeaderDir = 0;
+      return;
+    }
+
+    if (y <= h && !header.classList.contains("is-shown")) {
+      releaseSmartHeader();
+      smartHeaderDir = 0;
+      return;
+    }
+
+    smartHeaderDir += dy;
+    /* smart header treshold */
+    if (Math.abs(smartHeaderDir) < 32) return;
+
+    if (smartHeaderDir < 0 && past) pinSmartHeader(true);
+    else if (smartHeaderDir > 0 && past && header.classList.contains("is-smart")) {
+      pinSmartHeader(false);
+    }
+    smartHeaderDir = 0;
+  }
+
+  function bindSmartHeader() {
+    lastSmartHeaderY = scrollYNow();
+    window.addEventListener(
+      "scroll",
+      () => {
+        if (smartHeaderTick) return;
+        smartHeaderTick = requestAnimationFrame(() => {
+          smartHeaderTick = 0;
+          updateSmartHeader();
+        });
+      },
+      { passive: true }
+    );
+    window.addEventListener("resize", () => {
+      syncSmartHeaderSlot();
+      updateSmartHeader();
+    });
+    updateSmartHeader();
+  }
+
   function bindLogoSpin() {
     const logo = $(".app-logo");
     if (!logo) return;
@@ -9931,6 +10088,7 @@
     bindLogoMenu();
     bindNodeMenus();
     bindScrollTop();
+    bindSmartHeader();
     bindWelcome();
     const versionEl = document.getElementById("appVersion");
     if (versionEl) versionEl.textContent = "version " + APP_VERSION;

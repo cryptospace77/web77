@@ -195,6 +195,10 @@ body.is-post-open .welcome-flyer {
 }
 
 /* Header */
+.header-slot {
+  width: 100%;
+}
+
 .header {
   position: relative;
   z-index: 42;
@@ -205,7 +209,8 @@ body.is-post-open .welcome-flyer {
   width: 100%;
   padding: 1rem 1.75rem;
   flex-wrap: wrap;
-  background: transparent;
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);  
   border-bottom: 1px solid var(--border);
   overflow: visible;
 }
@@ -4679,9 +4684,52 @@ width: 100%;
 min-height: 100dvh;
 }
 
+.has-welcome .header-slot {
+  flex: 0 0 auto;
+}
+
 .has-welcome .header {
-flex: 0 0 auto;
   border-bottom-color: transparent;
+}
+
+.header.is-smart {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  z-index: 42;
+  border-bottom-color: var(--border);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-0.55rem);
+  transition:
+    opacity 0.28s ease,
+    transform 0.28s ease,
+    visibility 0s linear 0.28s;
+}
+
+.header.is-smart.is-shown {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  transition:
+    opacity 0.28s ease,
+    transform 0.28s ease,
+    visibility 0s;
+}
+
+.header.is-unhooking {
+  transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .header.is-smart,
+  .header.is-smart.is-shown {
+    transition: none;
+  }
 }
 
 .has-welcome .welcome-flyer {
