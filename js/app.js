@@ -2843,6 +2843,8 @@
         .toLowerCase();
       if (author && author === String(observer() || "").toLowerCase()) return "keep";
     }
+    // A post or comment opened from the collapsed profile. Back keeps the banner hidden.
+    if (r && r.name === "post" && document.body.classList.contains("is-account-sub")) return "keep";
     return "show";
   }
 
@@ -3300,8 +3302,13 @@
     }
     if (a.closest("#sessionAccountMenu") && isSessionProfileSubLink(href)) {
       accountMenuSubNav = true;
-    } else if (a.closest("#sessionAccountMenu") && isSessionProfileLink(href)) {
-      accountMenuProfile = true;
+    } else if (isSessionProfileLink(href) && !a.closest(".profile-nav")) {
+      // Account-menu Profile, and any other direct link to one's account while
+      // a profile or subpage is already open. Profile-nav tabs stay collapsed.
+      const here = parseRoute();
+      if (a.closest("#sessionAccountMenu") || (here && here.name === "profile")) {
+        accountMenuProfile = true;
+      }
     }
     if (HASH_ROUTING) {
       if (href.startsWith("#/") || href === "#") return;
@@ -3318,21 +3325,19 @@
         // Already on this profile section. Session name / Profile still
         // go to the top. Comments, Replies, and Wallet use the account-menu
         // subpage behavior.
-        if (
+        if (accountMenuSubNav) {
+          syncAccountMenuBanner("hide");
+          settleAccountMenuSub();
+          accountMenuSubNav = false;
+        } else if (accountMenuProfile) {
+          syncAccountMenuBanner("show");
+          accountMenuProfile = false;
+          window.scrollTo(0, 0);
+        } else if (
           a.classList.contains("session-name") ||
           a.closest("#sessionAccountMenu")
         ) {
-          if (accountMenuSubNav) {
-            syncAccountMenuBanner("hide");
-            settleAccountMenuSub();
-            accountMenuSubNav = false;
-          } else if (accountMenuProfile) {
-            syncAccountMenuBanner("show");
-            accountMenuProfile = false;
-            window.scrollTo(0, 0);
-          } else {
-            window.scrollTo(0, 0);
-          }
+          window.scrollTo(0, 0);
         }
         return;
       }
@@ -9830,8 +9835,8 @@
     quietSmartHeader();
     const r = parseRoute();
     // Account-menu comments, replies, and wallet collapse the banner on mobile.
-    // Profile-nav tabs, including Posts, keep that collapse. Only account-menu
-    // Profile shows the banner again.
+    // Profile-nav tabs keep that collapse. A direct link to one's account, and
+    // account-menu Profile, show the banner again.
     const fromAccountMenu =
       accountMenuSubNav && !fromProfileNav && isSessionProfileSubLink(currentPath());
     const fromAccountProfile =
