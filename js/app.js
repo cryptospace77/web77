@@ -63,8 +63,6 @@ let FILTER_LOW_REP = 20;
   const reblogsCache = new Map();
   const payoutByKey = new Map();
   const contentByKey = new Map();
-  let hivePower = null;
-  let hivePowerUser = "";
   let pendingCommentsScroll = false;
   let pendingPublish = false;
   let publishDest = { type: "blog", name: "", title: "My blog" };
@@ -1960,32 +1958,6 @@ let FILTER_LOW_REP = 20;
     return readStoredDownvoteWeight(voteKindFromEl(el));
   }
 
-  async function refreshHivePower() {
-    const user = observer();
-    if (!user) {
-      hivePower = null;
-      hivePowerUser = "";
-      return;
-    }
-    if (hivePowerUser === user && hivePower != null) return;
-    hivePowerUser = user;
-    try {
-      if (!ownAccountReady(user)) await loadAccountResources();
-      if (observer() !== user) return;
-      if (ownAccountReady(user)) {
-        const hp = hivePowerFromAccount(accountState.account, accountState.props);
-        hivePower = hp == null ? 0 : hp;
-        setNodeLabel();
-        return;
-      }
-      hivePower = await HiveApi.getHivePower(user);
-      setNodeLabel();
-    } catch {
-      if (observer() !== user) return;
-      hivePower = 0;
-    }
-  }
-
   function renderQueueStatus(size) {
     if (!queueSlot) return;
     const n = typeof size === "number" ? size : ChainQueue.size();
@@ -2376,9 +2348,6 @@ let FILTER_LOW_REP = 20;
       showError(signerNeededMessage());
       return false;
     }
-    if (hivePower == null || hivePowerUser !== user) {
-      await refreshHivePower();
-    }
     if (!btn.isConnected) return false;
     if (btn.classList.contains("is-pending") || btn.disabled) return false;
     return true;
@@ -2405,22 +2374,15 @@ let FILTER_LOW_REP = 20;
         queueVote(author, permlink, 0);
         return;
       }
-
-      if (hivePower > HP_SLIDER_THRESHOLD) {
-        const panel = sliderPanelFor(btn);
-        const open = Boolean(panel && !panel.hidden);
-        if (!open) {
-          showVoteSlider(btn);
-          return;
-        }
-        const percent = storeWeight(currentVotePercent(btn), voteKindFromEl(btn));
-        hideVoteSlider();
-        queueVote(author, permlink, percent);
+      const panel = sliderPanelFor(btn);
+      const open = Boolean(panel && !panel.hidden);
+      if (!open) {
+        showVoteSlider(btn);
         return;
       }
-
+      const percent = storeWeight(currentVotePercent(btn), voteKindFromEl(btn));
       hideVoteSlider();
-      queueVote(author, permlink, 100);
+      queueVote(author, permlink, percent);
     } finally {
       voteClickBusy = false;
     }
@@ -3647,11 +3609,7 @@ let FILTER_LOW_REP = 20;
     accountState.loaded = true;
     accountState.loadedAt = Date.now();
     writeStoredProfileImage(user, profileImage);
-    const hp = hivePowerFromAccount(account, accountState.props);
-    if (hp != null && observer() === user) {
-      hivePower = hp;
-      hivePowerUser = user;
-    }
+    //const hp = hivePowerFromAccount(account, accountState.props);
     paintAccountResources();
     syncOwnProfileBanner();
   }
@@ -4203,8 +4161,6 @@ let FILTER_LOW_REP = 20;
     sessionStorage.removeItem(SESSION_KEY);
     clearKeychainUser();
     if (window.HiveAuth) HiveAuth.clear();
-    hivePower = null;
-    hivePowerUser = "";
     localVotes.clear();
     votesCache.clear();
     localReblogs.clear();
@@ -4512,11 +4468,8 @@ let FILTER_LOW_REP = 20;
     sessionStorage.setItem(SESSION_KEY, username);
     if (method === "keychain") writeKeychainUser(username);
     else clearKeychainUser();
-    hivePower = null;
-    hivePowerUser = "";
     closeLogin();
     renderSession();
-    refreshHivePower();
     currentViewKey = "";
     if (pendingPublish) {
       pendingPublish = false;
@@ -10832,7 +10785,6 @@ let FILTER_LOW_REP = 20;
       restoreRememberedSession();
       renderSession();
       hydratePublishDraftFromStorage();
-      refreshHivePower();
       renderQueueStatus(ChainQueue.size());
       try {
         route();
