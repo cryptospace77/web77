@@ -1023,6 +1023,8 @@ let FILTER_LOW_REP = 20;
     clearUpvoteConfirmStyle();
     if (openSlider) {
       const { wrap, panel } = openSlider;
+      const active = document.activeElement;
+      if (active && panel.contains(active) && active.blur) active.blur();
       panel.hidden = true;
       clearVoteSliderPos(panel);
       if (wrap && panel.parentNode !== wrap) wrap.appendChild(panel);
@@ -1896,6 +1898,34 @@ let FILTER_LOW_REP = 20;
     document.body.appendChild(panel);
     panel.hidden = false;
     placeVoteSlider(btn, panel);
+    focusVoteSlider(panel);
+  }
+
+  function focusVoteSlider(panel) {
+    const slider = panel && panel.querySelector(".vote-slider");
+    if (!slider) return;
+    try {
+      slider.focus({ preventScroll: true, focusVisible: false });
+    } catch {
+      slider.focus();
+    }
+  }
+
+  function castVoteFromSliderKey(e) {
+    if (e.repeat || e.isComposing) return;
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const slider = e.target && e.target.closest && e.target.closest(".vote-slider");
+    if (!slider || !openSlider || openSlider.panel.hidden || !openSlider.panel.contains(slider)) {
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    if (openSlider.mode === "down") {
+      const confirmBtn = openSlider.panel.querySelector(".downvote-confirm");
+      if (confirmBtn) onDownvoteConfirm(confirmBtn);
+      return;
+    }
+    if (openSlider.btn) onVoteClick(openSlider.btn);
   }
 
   function showVoteSlider(btn) {
@@ -10410,6 +10440,10 @@ let FILTER_LOW_REP = 20;
     );
 
     document.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        castVoteFromSliderKey(e);
+        return;
+      }
       if (e.key !== "Escape") return;
       if (openReblog) {
         hideReblogConfirm();
