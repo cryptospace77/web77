@@ -9688,7 +9688,7 @@ let FILTER_LOW_REP = 20;
     view.innerHTML = `
       <section class="about">
         <h2 class="about-title">About</h2>
-        <p>Crypto Space 77 is a modern and lightweight, open-source front-end for the hive blockchain, the world's first blockchain-powered, decentralized social network.</p>
+        <p>Crypto Space 77 is a modern, fast and lightweight, open-source front-end for the hive blockchain, the world's first blockchain-powered, decentralized social network.</p>
         <p>The <a href="https://hive.io/">hive blockchain</a> is a web3 ecosystem with zero transaction fees, built for social media and dapps.</p>
         <h3>developed by</h3>
         <div class="social-links about-social">
