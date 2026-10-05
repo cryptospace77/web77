@@ -3387,7 +3387,7 @@ let FILTER_LOW_REP = 20;
 
   let resourceGen = 0;
   let accountLoad = null;
-  // Logged-in Hive account state from condenser_api.get_accounts, plus mana and RC, get hive power (hp) by hivePowerFromAccount
+  // Logged-in hive account state from condenser_api.get_accounts, plus mana and RC, get hive power (hp) by hivePowerFromAccount. check via ownAccountReady if loaded. loaded/refreshed by loadAccountResources.
   const accountState = {
     user: "",
     account: null,
