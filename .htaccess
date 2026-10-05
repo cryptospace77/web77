@@ -18,9 +18,3 @@
 <IfModule mod_dir.c>
   DirectoryIndex index.html
 </IfModule>
-
-<IfModule mod_mime.c>
-  AddType text/javascript .js
-  AddType text/css .css
-  AddType image/svg+xml .svg
-</IfModule>
