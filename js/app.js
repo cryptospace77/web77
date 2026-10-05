@@ -9709,7 +9709,8 @@ let FILTER_LOW_REP = 20;
     view.innerHTML = `
       <section class="about">
         <h2 class="about-title">About</h2>
-        <p>Crypto Space 77 is a lightweight and modern, open-source front-end for the hive blockchain, the world's first blockchain-powered, decentralized social network. The hive blockchain is a web3 ecosystem with zero transaction fees, built for social media and dapps.</p>
+        <p>Crypto Space 77 is a lightweight and modern, open-source front-end for the hive blockchain, the world's first blockchain-powered, decentralized social network.</p>
+        <p>The <a href="https://hive.io/">hive blockchain</a> is a web3 ecosystem with zero transaction fees, built for social media and dapps.</p>
         <h3>developed by</h3>
         <div class="social-links about-social">
           <a class="btn-social btn-social-red" href="${HiveMd.escapeHtml(appHref("/@vikisecrets"))}">@vikisecrets</a>
@@ -9720,7 +9721,10 @@ let FILTER_LOW_REP = 20;
           <a class="btn-social btn-social-gray" href="${HiveMd.escapeHtml(appHref("/@cryptospace77"))}">hive</a>
           <a class="btn-social btn-social-gray" href="https://x.com/cryptospace77x">X</a>
           <a class="btn-social btn-social-gray" href="https://instagram.com/cryptospace77com">instagram</a>
-          <a class="btn-social btn-social-gray" href="https://github.com/cryptospace77">github</a>
+        </div>
+        <h3>source code (MIT license)</h3>
+         <div class="social-links about-social">
+           <a class="btn-social btn-social-gray" href="https://github.com/cryptospace77/web77">github</a>
         </div>
         <h3><a href="${HiveMd.escapeHtml(appHref("/imprint"))}">imprint</a></h3>
       </section>
