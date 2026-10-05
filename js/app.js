@@ -25,8 +25,6 @@ let FILTER_LOW_REP = 20;
     post: "cs77_downvote_weight_post",
     comment: "cs77_downvote_weight_comment",
   };
-  const VOTE_WEIGHT_KEY_LEGACY = "cs77_vote_weight";
-  const HP_SLIDER_THRESHOLD = 500;
   const VOTERS_PAGE = 40;
   const VOTERS_SCROLL_PX = 72;
   const IMAGE_HOST = "https://images.hive.blog";
@@ -912,8 +910,6 @@ let FILTER_LOW_REP = 20;
     kind = normalizeVoteKind(kind);
     const specific = parseStoredWeight(localStorage.getItem(VOTE_WEIGHT_KEYS[kind]));
     if (specific != null) return specific;
-    const legacy = parseStoredWeight(localStorage.getItem(VOTE_WEIGHT_KEY_LEGACY));
-    if (legacy != null) return legacy;
     return 100;
   }
 
