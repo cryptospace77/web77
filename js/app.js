@@ -9721,8 +9721,11 @@ let FILTER_LOW_REP = 20;
         in the European Union
         </p>
         <h3>Disclaimer</h3>
-        <p>Crypto Space 77 is experimental alpha software. Run it at your own risk.</p>
-        <p>Powered by the <a href="https://hive.io/">hive blockchain</a></p>
+        <p>Crypto Space 77 is experimental alpha software.</p>
+        <p>This software is provided "as is" without warranties or conditions of any kind, express or implied.</p>
+        <p>This application acts as a client for the hive blockchain network, similar to an email client or web browser. It does not host, process or store any user content on its server.</p>
+        <p>Users are solely responsible for any content they create, publish, or distribute using this software. The authors and contributors assume no responsibility for user-generated content or activities on the hive network.</p>
+        <p>Powered by the <a href="https://hive.io/">hive blockchain</a>.</p>
       </section>
     `;
   }
