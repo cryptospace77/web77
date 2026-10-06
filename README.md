@@ -8,7 +8,7 @@ It is designed as a single-page application (SPA) that runs directly in your bro
 
 - Decentralized social media frontend
 - Powered by the hive blockchain
-- Lightweight browser-based SPA
+- Lightweight and ultra-fast browser-based SPA
 - Core features supported: posting, upvoting, commenting, feed, profiles, tags, communities
 - Supports Hive Keychain and login with your Posting key on mobile
 - Can be run locally on your own PC
