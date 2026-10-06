@@ -313,10 +313,10 @@
   }
 
   function tweetEmbedHtml(id) {
-    const href = "https://twitter.com/i/status/" + id;
+    const href = "https://x.com/i/status/" + id;
     return (
       '<div class="tweet-embed">' +
-      '<blockquote class="twitter-tweet" data-dnt="true" data-theme="dark">' +
+      '<blockquote class="twitter-tweet" data-theme="dark">' +
       '<a href="' +
       href +
       '">View on X</a>' +
@@ -339,7 +339,7 @@
     if (!document.getElementById("twitter-wjs")) {
       const script = document.createElement("script");
       script.id = "twitter-wjs";
-      script.src = "https://platform.twitter.com/widgets.js";
+      script.src = "https://platform.x.com/widgets.js";
       script.async = true;
       const first = document.getElementsByTagName("script")[0];
       if (first && first.parentNode) {
