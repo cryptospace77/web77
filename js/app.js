@@ -149,14 +149,22 @@ let FILTER_LOW_REP = 20;
     seen: new Set(),
   };
 
+  // One list backs every post stream. kind says which stream it is:
+  // following (accounts you follow), ranked (latest / trending / hot),
+  // tag (those sorts for one tag), profile (posts / comments / replies),
+  // community (latest / trending / hot inside one community).
+  // tag is only a ranked tag. scope is the profile account or community name.
   const feedState = {
+    kind: "ranked",
     sort: "latest",
     tag: "",
+    scope: "",
     items: [],
     seen: new Set(),
     cursor: null,
     loading: false,
     done: false,
+    gen: 0,
   };
 
   function observer() {
@@ -5307,37 +5315,95 @@ let FILTER_LOW_REP = 20;
   }
 
   /* ─── Feed ─── */
-  function resetFeed(sort, tag) {
-    feedState.sort = sort || "latest";
-    feedState.tag = normalizeRouteTag(tag) || "";
+  function feedSpecForRoute(sort, tag) {
+    const t = normalizeRouteTag(tag) || "";
+    let s = sort === "trending" || sort === "hot" || sort === "feed" ? sort : "latest";
+    if (s === "feed" && t) s = "latest";
+    if (s === "feed") return { kind: "following", sort: "feed", tag: "", scope: "" };
+    if (t) return { kind: "tag", sort: s, tag: t, scope: "" };
+    return { kind: "ranked", sort: s, tag: "", scope: "" };
+  }
+
+  function feedSpecForProfile(author, page) {
+    const sort = page === "comments" || page === "replies" ? page : "posts";
+    return {
+      kind: "profile",
+      sort,
+      tag: "",
+      scope: String(author || "")
+        .replace(/^@/, "")
+        .toLowerCase(),
+    };
+  }
+
+  function feedSpecForCommunity(name, page) {
+    const sort = page === "trending" || page === "hot" ? page : "latest";
+    return {
+      kind: "community",
+      sort,
+      tag: "",
+      scope: normalizeCommunityName(name),
+    };
+  }
+
+  function feedSpecKey(spec) {
+    const s = spec || {};
+    return [s.kind || "", s.sort || "", s.tag || "", s.scope || ""].join("\n");
+  }
+
+  function currentFeedKey() {
+    return feedSpecKey(feedState);
+  }
+
+  function feedStill(gen) {
+    return gen === feedState.gen;
+  }
+
+  function resetFeed(spec) {
+    const next = spec || feedSpecForRoute("latest");
+    feedState.kind = next.kind || "ranked";
+    feedState.sort = next.sort || "latest";
+    feedState.tag = next.tag || "";
+    feedState.scope = next.scope || "";
     feedState.items = [];
     feedState.seen = new Set();
     feedState.cursor = null;
     feedState.loading = false;
     feedState.done = false;
+    feedState.gen += 1;
   }
 
-  function isPersonalFeed() {
-    return feedState.sort === "feed" && !feedState.tag;
+  function isFollowingFeed() {
+    return feedState.kind === "following";
+  }
+
+  function isFeedSurface(kind) {
+    return kind === "following" || kind === "ranked" || kind === "tag" || kind === "community";
   }
 
   async function loadFeedPage() {
     if (feedState.loading || feedState.done) return;
-    feedState.loading = true;
-    let pages = 0;
-    const startCount = feedState.items.length;
+    const kind = feedState.kind;
+    if (!isFeedSurface(kind)) return;
+    const gen = feedState.gen;
+    const following = kind === "following";
+    const sort = feedState.sort;
+    const tag = kind === "community" ? feedState.scope : kind === "tag" ? feedState.tag : "";
     const user = observer();
-    const personal = isPersonalFeed();
-    const tag = feedState.tag;
 
-    if (personal && !user) {
+    if (following && !user) {
+      if (!feedStill(gen)) return;
       feedState.done = true;
-      feedState.loading = false;
       return;
     }
 
+    feedState.loading = true;
+    let pages = 0;
+    const startCount = feedState.items.length;
+
     try {
       while (
+        feedStill(gen) &&
         pages < MAX_PAGES_PER_LOAD &&
         feedState.items.length < startCount + FEED_TARGET
       ) {
@@ -5347,17 +5413,18 @@ let FILTER_LOW_REP = 20;
           observer: user,
           limit: HiveApi.PAGE_SIZE,
         };
-        const batch = personal
+        const batch = following
           ? await HiveApi.getAccountPosts({
               account: user,
               sort: "feed",
               ...cursor,
             })
           : await HiveApi.getRankedPosts({
-              sort: feedState.sort,
+              sort,
               tag: tag || "",
               ...cursor,
             });
+        if (!feedStill(gen)) return;
         setNodeLabel();
         pages++;
 
@@ -5375,9 +5442,12 @@ let FILTER_LOW_REP = 20;
           feedState.seen.add(key);
           added++;
           if (isBlacklistedPost(post)) continue;
+          // Following keeps posts and reblogs. Cross-post shells stay on the other feeds.
+          if (following && crossPostRef(post)) continue;
           incoming.push(post);
         }
         await resolveCrossPosts(incoming);
+        if (!feedStill(gen)) return;
         for (let i = 0; i < incoming.length; i++) {
           if (!keepHydratedPost(incoming[i])) continue;
           feedState.items.push(incoming[i]);
@@ -5404,7 +5474,7 @@ let FILTER_LOW_REP = 20;
         }
       }
     } finally {
-      feedState.loading = false;
+      if (feedStill(gen)) feedState.loading = false;
     }
   }
 
@@ -5688,9 +5758,10 @@ let FILTER_LOW_REP = 20;
 
   async function renderFeed(sort, reset, tag) {
     const t = normalizeRouteTag(tag) || "";
-    if (reset || feedState.sort !== sort || feedState.tag !== t) resetFeed(sort, t);
+    const spec = feedSpecForRoute(sort, t);
+    if (reset || currentFeedKey() !== feedSpecKey(spec)) resetFeed(spec);
     const loadingMsg =
-      sort === "feed"
+      spec.kind === "following"
         ? "Loading your feed…"
         : t
           ? "Loading #" + t + "…"
@@ -5710,20 +5781,25 @@ let FILTER_LOW_REP = 20;
     const moreBtn = $("#moreBtn");
 
     async function fill() {
+      const gen = feedState.gen;
       hideVoteSlider();
       moreBtn.hidden = true;
       status.hidden = false;
+      let failed = false;
       try {
         await loadFeedPage();
-        clearError();
       } catch (err) {
+        if (!feedStill(gen)) return;
+        failed = true;
         showError(err.message || String(err));
       }
+      if (!feedStill(gen) || !list.isConnected) return;
+      if (!failed) clearError();
       paintFeedCards(list, cardHtml);
       if (!feedState.items.length && feedState.done) {
         status.hidden = true;
-        const personal = isPersonalFeed();
-        list.innerHTML = personal
+        const following = isFollowingFeed();
+        list.innerHTML = following
           ? `
           <div class="panel empty-state">
             <h2>Your feed is empty</h2>
@@ -5833,11 +5909,11 @@ let FILTER_LOW_REP = 20;
     if (feedState.items.length) return;
     const user = observer();
     if (user) {
-      resetFeed("feed");
+      resetFeed(feedSpecForRoute("feed"));
       await loadFeedPage();
       if (feedState.items.length) return;
     }
-    resetFeed("trending");
+    resetFeed(feedSpecForRoute("trending"));
     await loadFeedPage();
   }
 
@@ -7310,8 +7386,15 @@ let FILTER_LOW_REP = 20;
 
   function paintFeedCards(list, mapFn) {
     const items = feedState.items || [];
-    for (let i = 0; i < items.length; i++) rememberCardContent(cardDisplayPost(items[i]));
-    list.innerHTML = items.map(mapFn).join("");
+    const following = isFollowingFeed();
+    const visible = [];
+    for (let i = 0; i < items.length; i++) {
+      const post = items[i];
+      if (following && crossPostRef(post)) continue;
+      rememberCardContent(cardDisplayPost(post));
+      visible.push(post);
+    }
+    list.innerHTML = visible.map(mapFn).join("");
   }
 
   function feedCardHrefMatches(href, author, permlink) {
@@ -8914,7 +8997,7 @@ let FILTER_LOW_REP = 20;
   async function renderProfileFeed(author, page) {
     const sort = page === "comments" ? "comments" : page === "replies" ? "replies" : "posts";
     if (!profileRouteStill(author, sort)) return;
-    resetFeed(sort, author);
+    resetFeed(feedSpecForProfile(author, sort));
     const emptyTitle =
       page === "comments" ? "No comments" : page === "replies" ? "No replies" : "No posts";
     const emptyDetail =
@@ -8939,12 +9022,15 @@ let FILTER_LOW_REP = 20;
 
     async function loadPage() {
       if (feedState.loading || feedState.done) return;
+      if (feedState.kind !== "profile" || feedState.scope !== author || feedState.sort !== sort) return;
+      const gen = feedState.gen;
       feedState.loading = true;
       let pages = 0;
       const startCount = feedState.items.length;
       const user = observer();
       try {
         while (
+          feedStill(gen) &&
           pages < MAX_PAGES_PER_LOAD &&
           feedState.items.length < startCount + FEED_TARGET
         ) {
@@ -8956,6 +9042,7 @@ let FILTER_LOW_REP = 20;
             startPermlink: feedState.cursor && feedState.cursor.permlink,
             observer: user,
           });
+          if (!feedStill(gen)) return;
           setNodeLabel();
           pages++;
           if (!batch.length) {
@@ -8974,6 +9061,7 @@ let FILTER_LOW_REP = 20;
             incoming.push(post);
           }
           await resolveCrossPosts(incoming);
+          if (!feedStill(gen)) return;
           for (let i = 0; i < incoming.length; i++) {
             if (!keepHydratedPost(incoming[i])) continue;
             feedState.items.push(incoming[i]);
@@ -8999,23 +9087,26 @@ let FILTER_LOW_REP = 20;
           }
         }
       } finally {
-        feedState.loading = false;
+        if (feedStill(gen)) feedState.loading = false;
       }
     }
 
     async function fill() {
-      if (!profileRouteStill(author, sort)) return;
+      const gen = feedState.gen;
+      if (!profileRouteStill(author, sort) || !feedStill(gen)) return;
       hideVoteSlider();
       moreBtn.hidden = true;
       status.hidden = false;
+      let failed = false;
       try {
         await loadPage();
-        clearError();
       } catch (err) {
-        if (!profileRouteStill(author, sort)) return;
+        if (!profileRouteStill(author, sort) || !feedStill(gen)) return;
+        failed = true;
         showError(err.message || String(err));
       }
-      if (!profileRouteStill(author, sort)) return;
+      if (!profileRouteStill(author, sort) || !feedStill(gen) || !list.isConnected) return;
+      if (!failed) clearError();
       paintFeedCards(list, profileCardHtml);
       if (!feedState.items.length && feedState.done) {
         status.hidden = true;
@@ -9638,7 +9729,7 @@ let FILTER_LOW_REP = 20;
         return;
       }
 
-      resetFeed(tab, communityState.name);
+      resetFeed(feedSpecForCommunity(communityState.name, tab));
       view.innerHTML = `
         ${chrome}
         <div id="feedList" class="feed"></div>
@@ -9652,15 +9743,20 @@ let FILTER_LOW_REP = 20;
       const moreBtn = $("#moreBtn");
 
       async function fill() {
+        const gen = feedState.gen;
         hideVoteSlider();
         moreBtn.hidden = true;
         status.hidden = false;
+        let failed = false;
         try {
           await loadFeedPage();
-          clearError();
         } catch (err) {
+          if (!feedStill(gen)) return;
+          failed = true;
           showError(err.message || String(err));
         }
+        if (!feedStill(gen) || !list.isConnected) return;
+        if (!failed) clearError();
         paintFeedCards(list, cardHtml);
         if (!feedState.items.length && feedState.done) {
           status.hidden = true;
