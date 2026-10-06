@@ -2341,6 +2341,12 @@ a.article-community:hover {
   overflow-wrap: break-word;
 }
 
+.article h1 a,
+.article h1 a:hover {
+  color: inherit;
+  text-shadow: inherit;
+}
+
 .article-byline {
   display: flex;
   align-items: center;

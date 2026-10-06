@@ -617,6 +617,39 @@ let FILTER_LOW_REP = 20;
     return "#" + id;
   }
 
+  // Bridge comment `url` is /category/@root/permlink#@commenter/permlink.
+  // The title on a comment's own page links to that comment in the root post.
+  function commentOnRootHref(post) {
+    if (!post || isRootPost(post)) return "";
+    const author = String(post.author || "")
+      .replace(/^@/, "")
+      .trim();
+    const permlink = String(post.permlink || "").trim();
+    if (!author || !permlink) return "";
+    let raw = String(post.url || "").trim();
+    if (!raw) return "";
+    raw = raw.replace(/^https?:\/\/(?:www\.)?(?:hive\.blog|peakd\.com|ecency\.com)\//i, "");
+    raw = raw.replace(/^\//, "");
+    const at = raw.indexOf("@");
+    if (at < 0) return "";
+    const rest = raw.slice(at);
+    const hashIdx = rest.indexOf("#");
+    const pathPart = (hashIdx >= 0 ? rest.slice(0, hashIdx) : rest)
+      .split("?")[0]
+      .replace(/\/+$/, "");
+    if (!pathPart) return "";
+    const self = "@" + author.toLowerCase() + "/" + permlink.toLowerCase();
+    if (pathPart.toLowerCase() === self) return "";
+    const parsed = parseCommentFragment(hashIdx >= 0 ? rest.slice(hashIdx) : "");
+    const same =
+      parsed &&
+      parsed.author === author.toLowerCase() &&
+      String(parsed.permlink).toLowerCase() === permlink.toLowerCase();
+    const hash = "#" + (same ? parsed.id : commentAnchorId(author, permlink));
+    if (HASH_ROUTING) return appHref("/" + pathPart);
+    return appHref("/" + pathPart) + hash;
+  }
+
   function parsePayoutAmount(value) {
     if (typeof value === "number" && Number.isFinite(value)) return value;
     if (!value) return NaN;
@@ -5262,8 +5295,7 @@ let FILTER_LOW_REP = 20;
   function applyPostEditToView(title, body) {
     const article = activeArticle();
     if (!article) return;
-    const h1 = article.querySelector(":scope > h1");
-    if (h1) h1.textContent = title || "(untitled)";
+    paintArticleTitle(article, Object.assign({}, currentPost || {}, { title: title || "" }));
     const bodyEl = article.querySelector(":scope > .post-body");
     if (bodyEl) bodyEl.innerHTML = HiveMd.renderMarkdown(body || "");
     const tagsEl = article.querySelector(":scope > .tags");
@@ -7072,6 +7104,41 @@ let FILTER_LOW_REP = 20;
     return Number(root && root.children) || 0;
   }
 
+  function articleTitleText(post) {
+    const title = post && post.title != null ? String(post.title) : "";
+    return title || "(untitled)";
+  }
+
+  function articleTitleHtml(post) {
+    const title = HiveMd.escapeHtml(articleTitleText(post));
+    const href = commentOnRootHref(post);
+    if (!href) return title;
+    return `<a href="${HiveMd.escapeHtml(href)}">${title}</a>`;
+  }
+
+  function paintArticleTitle(article, post) {
+    if (!article) return;
+    const h1 = article.querySelector(":scope > h1");
+    if (!h1) return;
+    const title = articleTitleText(post);
+    const href = commentOnRootHref(post);
+    const link = h1.querySelector(":scope > a");
+    if (href) {
+      if (
+        link &&
+        h1.childNodes.length === 1 &&
+        link.getAttribute("href") === href &&
+        link.textContent === title
+      ) {
+        return;
+      }
+      h1.innerHTML = articleTitleHtml(post);
+      return;
+    }
+    if (!link && h1.textContent === title) return;
+    h1.textContent = title;
+  }
+
   function articleHtml(root, opts) {
     const options = opts || {};
     const community = communityLabelHtml(root, "article-community");
@@ -7090,7 +7157,7 @@ let FILTER_LOW_REP = 20;
     return `
       <article class="article">
         ${community}
-        <h1>${HiveMd.escapeHtml(root.title || "(untitled)")}</h1>
+        <h1>${articleTitleHtml(root)}</h1>
         <div class="article-byline">
           ${authorLinkHtml(root.author, "medium")}
           <span>· ${Math.floor(HiveMd.displayReputation(root.author_reputation))}</span>
@@ -7199,10 +7266,7 @@ let FILTER_LOW_REP = 20;
   function patchOpenArticle(prev, root) {
     const article = activeArticle();
     if (!article) return false;
-    const h1 = article.querySelector(":scope > h1");
-    if (h1 && String((prev && prev.title) || "") !== String(root.title || "")) {
-      h1.textContent = root.title || "(untitled)";
-    }
+    paintArticleTitle(article, root);
     if (String((prev && prev.body) || "") !== String(root.body || "")) {
       const bodyEl = article.querySelector(":scope > .post-body");
       if (bodyEl) bodyEl.innerHTML = HiveMd.renderMarkdown(root.body || "");
