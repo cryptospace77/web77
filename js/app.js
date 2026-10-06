@@ -9,7 +9,7 @@ let FILTER_LOW_REP = 20;
   "use strict";
 
   const APP_ID = "cryptospace77.com";
-  const APP_VERSION = "0.15";
+  const APP_VERSION = "0.16";
   const FEED_TARGET = 20;
   const MAX_PAGES_PER_LOAD = 12;
   const SESSION_KEY = "cs77_user";
