@@ -5570,7 +5570,7 @@ let FILTER_LOW_REP = 20;
         )}">${HiveMd.escapeHtml(destTitle)}</a>`;
       }
       lines.push(
-        `<span class="feed-share-line">${shareIconHtml("crosspost")}${handleLinkHtml(post.author)} cross-posted${extra}</span>`
+        `<span class="feed-share-line">${shareIconHtml("crosspost")}<span class="feed-share-cp">${handleLinkHtml(post.author)} cross-posted${extra}</span></span>`
       );
     }
     if (!lines.length) return "";

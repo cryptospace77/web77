@@ -1713,6 +1713,7 @@ html.has-mouse .session-account.is-dismissed:focus-within .session-account-menu 
 .feed-share a {
   color: var(--gray);
   text-shadow: none;
+  white-space: nowrap;
 }
 
 .feed-share a:hover {
