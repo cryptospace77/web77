@@ -46,6 +46,7 @@ let FILTER_LOW_REP = 20;
   const NOTIF_SCROLL_PX = 72;
   const NOTIF_POLL_MS = 60000;
   const ACCOUNT_STATE_FRESH_MS = 60000;
+  const BLOCK_EXPLORER = "https://hivescan.info/";
 
   const $ = (sel) => document.querySelector(sel);
   const view = $("#view");
@@ -8194,7 +8195,7 @@ let FILTER_LOW_REP = 20;
       .trim()
       .toLowerCase();
     if (!/^[0-9a-f]{40}$/.test(id) || /^0+$/.test(id)) return "";
-    return "https://hivescan.info/tx/" + id;
+    return BLOCK_EXPLORER + "tx/" + id;
   }
 
   const WALLET_TX_PAGE = 30;
