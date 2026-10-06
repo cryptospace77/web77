@@ -11,16 +11,17 @@
   const CUSTOM_NODES_KEY = "cs77_hive_custom_nodes";
   const CUSTOM_NODE_LIMIT = 8;
 
-  // Same public nodes as Hive Toolbox (../hive/).
+  // Hive public nodes
   const FALLBACK_NODES = [
     "https://api.hive.blog",
     "https://api.openhive.network",
+    "https://api.c0ff33a.uk",
     "https://api.deathwing.me",
     "https://rpc.mahdiyari.info",
     "https://api.syncad.com",
     "https://techcoderx.com",
   ];
-
+  
   function parseNodeInput(input) {
     const raw = String(input || "").trim();
     if (!raw) return { url: "", error: "Enter a Hive API server." };
