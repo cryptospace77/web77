@@ -4862,6 +4862,11 @@ body:has(#publishOverlay:not([hidden])) {
     flex: 1;
   }
 
+  .composer-bar .composer-actions .composer-submit {
+    margin-left: 0.8rem;
+    margin-right: 0.8rem;
+  }
+
   .composer-hint {
     flex-basis: 100%;
   }
