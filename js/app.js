@@ -71,9 +71,6 @@ let FILTER_LOW_REP = 20;
   let publishSubsUser = "";
   let lastNonPublishPath = "/";
   let publishNavPushed = false;
-  // Non-zero while closePublish is popping history past the location map.
-  // Those iframe steps must not run route(), or the dialog opens again.
-  let publishLeaveGen = 0;
   let currentViewKey = "";
   let initialPageLoad = true;
   // Set for a click on the profile nav. route() clears it. Those switches
@@ -3436,9 +3433,8 @@ let FILTER_LOW_REP = 20;
       if (u.pathname === location.pathname && u.hash && !/^#\//.test(u.hash)) return;
       if (u.pathname === location.pathname && u.search === location.search && !u.hash) {
         e.preventDefault();
-        // Closing publish can leave the address on /publish when the location
-        // map iframe took the history step. The link is this same path, so
-        // open the dialog instead of treating it as a no-op.
+        // A same-path click while the address is still /publish and the
+        // composer is closed opens it again.
         if (parseRoute().name === "publish") {
           const pub = $("#publishOverlay");
           if (!pub || pub.hidden) openPublishOverlay();
@@ -3474,7 +3470,6 @@ let FILTER_LOW_REP = 20;
   });
 
   window.addEventListener("popstate", () => {
-    if (publishLeaveGen) return;
     if (!HASH_ROUTING) route();
   });
   window.addEventListener("hashchange", () => {
@@ -4935,30 +4930,25 @@ let FILTER_LOW_REP = 20;
   let publishTitleDraft = "";
   let publishBodyDraft = "";
   let locSession = 0;
-  let locMapGen = 0;
-  const LOCATION_MAP_CROP = 48;
   let locCenter = { lat: 20, lng: 0 };
   let locView = { lat: 20, lng: 0 };
   let locZoom = 2;
-  let locZoomLive = 2;
-  let locZoomGoal = 2;
-  let locZoomTimer = 0;
-  let locZoomAnim = 0;
-  let locPanX = 0;
-  let locPanY = 0;
-  let locPinching = false;
-  let locPinchDist = 0;
-  let locPinchZoom = 2;
-  const locPointers = new Map();
   let locPicked = false;
   let locDescAuto = true;
   let locRevSeq = 0;
   let locHadSaved = false;
-  let locSearchTimer = 0;
   let locSearchAbort = null;
   let locSuggests = [];
   let locSuggestActive = -1;
-  let locDragging = false;
+  let locMap = null;
+  let locMarker = null;
+  let locMapLibre = null;
+  let maplibrePromise = null;
+  const LOCATION_MIN_ZOOM = -2;
+  const LOCATION_MAX_ZOOM = 18;
+  const LOCATION_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
+  const MAPLIBRE_JS = "https://cdn.jsdelivr.net/npm/maplibre-gl@6.13.0/dist/maplibre-gl.mjs";
+  const MAPLIBRE_CSS = "https://cdn.jsdelivr.net/npm/maplibre-gl@6.13.0/dist/maplibre-gl.css";
 
   function savePublishDraft() {
     const title = $("#publishTitle");
@@ -5229,17 +5219,6 @@ let FILTER_LOW_REP = 20;
 
   function hideLocationDialog() {
     locSession++;
-    locMapGen++;
-    locDragging = false;
-    locPinching = false;
-    locPointers.clear();
-    locPanX = 0;
-    locPanY = 0;
-    cancelZoomMotion();
-    if (locSearchTimer) {
-      clearTimeout(locSearchTimer);
-      locSearchTimer = 0;
-    }
     if (locSearchAbort) {
       locSearchAbort.abort();
       locSearchAbort = null;
@@ -5276,47 +5255,159 @@ let FILTER_LOW_REP = 20;
     return ((((lng + 180) % 360) + 360) % 360) - 180;
   }
 
-  function worldPoint(lat, lng) {
-    const s = Math.sin((lat * Math.PI) / 180);
-    return {
-      x: (lng + 180) / 360,
-      y: 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI),
-    };
+  function clampLocationZoom(zoom) {
+    return Math.max(LOCATION_MIN_ZOOM, Math.min(LOCATION_MAX_ZOOM, zoom));
   }
 
-  function pointToLatLng(x, y) {
-    const yy = Math.max(0, Math.min(1, y));
-    const lng = x * 360 - 180;
-    const n = Math.PI - 2 * Math.PI * yy;
-    const lat = (180 / Math.PI) * Math.atan(Math.sinh(n));
-    return { lat: clampLocLat(lat), lng: wrapLocLng(lng) };
+  function loadMapLibre() {
+    if (locMapLibre) return Promise.resolve(locMapLibre);
+    if (maplibrePromise) return maplibrePromise;
+    maplibrePromise = new Promise((resolve, reject) => {
+      if (!document.querySelector("link[data-maplibre]")) {
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = MAPLIBRE_CSS;
+        link.dataset.maplibre = "1";
+        document.head.appendChild(link);
+      }
+      import(MAPLIBRE_JS).then(resolve, reject);
+    })
+      .then((mod) => {
+        locMapLibre = mod;
+        return mod;
+      })
+      .catch((err) => {
+        maplibrePromise = null;
+        throw err;
+      });
+    return maplibrePromise;
   }
 
-  function pointAtPixel(lat, lng, zoom, dx, dy) {
-    const scale = 256 * Math.pow(2, zoom);
-    const w = worldPoint(lat, lng);
-    return pointToLatLng(w.x + dx / scale, w.y + dy / scale);
+  function locationPinElement() {
+    const el = document.createElement("div");
+    el.className = "location-pin";
+    el.innerHTML =
+      '<svg viewBox="0 0 30 42" width="30" height="42" aria-hidden="true">' +
+      '<path d="M15 0C6.7 0 0 6.7 0 15c0 10.5 13.4 25.4 14 26.1a1.4 1.4 0 0 0 2 0c.6-.7 14-15.6 14-26.1C30 6.7 23.3 0 15 0z" fill="#e31337"/>' +
+      '<circle cx="15" cy="15" r="6" fill="#fff"/></svg>';
+    return el;
   }
 
-  function locationMapSrc(lat, lng, zoom) {
-    return (
-      "https://maps.google.com/maps?ll=" +
-      lat.toFixed(6) +
-      "," +
-      lng.toFixed(6) +
-      "&z=" +
-      zoom +
-      "&output=embed"
-    );
+  function syncLocationMarker() {
+    if (!locMap || !locMapLibre) return;
+    if (!locPicked) {
+      if (locMarker) {
+        locMarker.remove();
+        locMarker = null;
+      }
+      return;
+    }
+    const ll = [locCenter.lng, locCenter.lat];
+    if (!locMarker) {
+      locMarker = new locMapLibre.Marker({
+        element: locationPinElement(),
+        anchor: "bottom",
+      })
+        .setLngLat(ll)
+        .addTo(locMap);
+    } else {
+      locMarker.setLngLat(ll);
+    }
   }
 
-  function locationFrame() {
-    return $("#locationMapFrame");
+  function applyLocationCamera(animate) {
+    if (!locMap) return;
+    const camera = { center: [locView.lng, locView.lat], zoom: locZoom };
+    if (animate) locMap.flyTo(Object.assign({ duration: 750, essential: true }, camera));
+    else locMap.jumpTo(camera);
+  }
+
+  function frameLocationWorld() {
+    if (!locMap) return;
+    const canvas = locMap.getContainer();
+    const width = canvas ? canvas.clientWidth : 0;
+    // 512px is the world width at zoom 0, so this zoom shows the world once across.
+    const zoom = width > 2 ? Math.log2(width / 512) : 0;
+    locView = { lat: 0, lng: 0 };
+    locZoom = clampLocationZoom(zoom);
+    applyLocationCamera(false);
+  }
+
+  function resizeLocationMap() {
+    if (!locMap) return;
+    // resize() stops an in-flight flyTo and moveend would keep the interrupted
+    // center. Remember the requested camera and put it back.
+    const camera = { center: [locView.lng, locView.lat], zoom: locZoom };
+    locMap.resize();
+    locMap.jumpTo(camera);
+  }
+
+  function showLocationMap(session) {
+    const canvas = $("#locationMapCanvas");
+    const box = $("#locationMap");
+    if (!canvas) return Promise.resolve();
+    if (box && !locMap) box.dataset.state = "loading";
+    return loadMapLibre()
+      .then((ml) => {
+        if (session !== locSession || !locationDialogOpen()) return;
+        if (!locMap) {
+          let ready = false;
+          locMap = new ml.Map({
+            container: canvas,
+            style: LOCATION_STYLE_URL,
+            center: [locView.lng, locView.lat],
+            zoom: locZoom,
+            minZoom: LOCATION_MIN_ZOOM,
+            maxZoom: LOCATION_MAX_ZOOM,
+            attributionControl: false,
+            dragRotate: false,
+            pitchWithRotate: false,
+          });
+          locMap.addControl(new ml.AttributionControl({ compact: true }), "bottom-left");
+          locMap.dragRotate.disable();
+          locMap.touchZoomRotate.disableRotation();
+          locMap.keyboard.disableRotation();
+          locMap.on("click", (e) => {
+            if (!locationDialogOpen()) return;
+            moveLocationPin({ lat: e.lngLat.lat, lng: e.lngLat.lng }, 0, "", true);
+          });
+          locMap.on("moveend", () => {
+            if (!locMap) return;
+            const c = locMap.getCenter();
+            locView = { lat: c.lat, lng: wrapLocLng(c.lng) };
+            locZoom = locMap.getZoom();
+          });
+          locMap.on("load", () => {
+            ready = true;
+            if (box) box.dataset.state = "ready";
+            if (!locMap || session !== locSession) return;
+            resizeLocationMap();
+            syncLocationMarker();
+          });
+          locMap.on("error", (ev) => {
+            if (ready || (ev && ev.sourceId)) return;
+            if (box) box.dataset.state = "error";
+            setLocationStatus("Couldn't load the map. Check your connection and try again.", true);
+          });
+        } else if (box && box.dataset.state !== "error") {
+          box.dataset.state = "ready";
+        }
+        if (locPicked) applyLocationCamera(false);
+        else frameLocationWorld();
+        syncLocationMarker();
+        requestAnimationFrame(() => {
+          if (locMap && session === locSession) resizeLocationMap();
+        });
+      })
+      .catch(() => {
+        if (session !== locSession) return;
+        if (box) box.dataset.state = "error";
+        setLocationStatus("Couldn't load the map. Check your connection and try again.", true);
+      });
   }
 
   function paintLocationChrome() {
-    const pin = $("#locationPin");
-    if (pin) pin.hidden = !locPicked;
+    syncLocationMarker();
     const coords = $("#locationCoords");
     if (coords) {
       coords.textContent = locPicked
@@ -5329,183 +5420,38 @@ let FILTER_LOW_REP = 20;
     if (remove) remove.hidden = !locHadSaved;
   }
 
-  function pinPixelOffset(pin, view, zoom) {
-    const scale = 256 * Math.pow(2, zoom);
-    const p = worldPoint(pin.lat, pin.lng);
-    const v = worldPoint(view.lat, view.lng);
-    let dxWorld = p.x - v.x;
-    if (dxWorld > 0.5) dxWorld -= 1;
-    if (dxWorld < -0.5) dxWorld += 1;
-    return { dx: dxWorld * scale, dy: (p.y - v.y) * scale };
+  function photonText(value) {
+    return value == null ? "" : String(value).trim();
   }
 
-  function placeLocationPin() {
-    const pin = $("#locationPin");
-    if (!pin) return;
-    if (!locPicked) {
-      pin.hidden = true;
-      pin.style.left = "";
-      pin.style.top = "";
-      pin.style.transform = "";
-      return;
-    }
-    const off = pinPixelOffset(locCenter, locView, locZoom);
-    const gesture = Math.pow(2, locZoomLive - locZoom);
-    const dx = off.dx * gesture + locPanX;
-    const dy = off.dy * gesture + locPanY;
-    pin.hidden = false;
-    pin.style.left = "calc(50% + " + dx.toFixed(2) + "px)";
-    pin.style.top =
-      "calc(50% - " + LOCATION_MAP_CROP / 2 + "px + " + dy.toFixed(2) + "px)";
-    pin.style.transform = "translate(-50%, -100%)";
+  function photonSuggestion(feature, i) {
+    const coords = feature && feature.geometry && feature.geometry.coordinates;
+    if (!coords || coords.length < 2) return null;
+    const lng = Number(coords[0]);
+    const lat = Number(coords[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    const p = feature.properties || {};
+    const houseAndStreet = [photonText(p.street), photonText(p.housenumber)].filter(Boolean).join(" ");
+    const label =
+      photonText(p.name) ||
+      houseAndStreet ||
+      photonText(p.city) ||
+      photonText(p.county) ||
+      photonText(p.state);
+    if (!label) return null;
+    const hintParts = [
+      houseAndStreet && houseAndStreet !== label ? houseAndStreet : "",
+      photonText(p.city) && photonText(p.city) !== label ? photonText(p.city) : "",
+      photonText(p.state) && photonText(p.state) !== label ? photonText(p.state) : "",
+      photonText(p.country),
+    ].filter(Boolean);
+    const hint = hintParts.filter((part, idx) => part !== hintParts[idx - 1]).join(", ");
+    return { id: String(p.osm_id || i) + ":" + i, label, hint, lat, lng };
   }
 
-  function applyMapTransform() {
-    const frame = locationFrame();
-    const map = $("#locationMap");
-    const scale = Math.pow(2, locZoomLive - locZoom);
-    const zooming = Math.abs(scale - 1) > 0.004;
-    if (map) map.classList.toggle("is-zooming", zooming);
-    if (frame) {
-      const parts = [];
-      if (locPanX || locPanY) parts.push("translate(" + locPanX.toFixed(2) + "px, " + locPanY.toFixed(2) + "px)");
-      if (zooming) parts.push("scale(" + scale.toFixed(4) + ")");
-      frame.style.transform = parts.join(" ");
-    }
-    placeLocationPin();
-  }
-
-  function shiftLocationMap(dx, dy) {
-    locPanX = dx;
-    locPanY = dy;
-    applyMapTransform();
-  }
-
-  function settleLocationMap() {
-    locPanX = 0;
-    locPanY = 0;
-    const map = $("#locationMap");
-    if (map) map.classList.remove("is-panning");
-    applyMapTransform();
-  }
-
-  function cancelZoomMotion() {
-    if (locZoomTimer) {
-      clearTimeout(locZoomTimer);
-      locZoomTimer = 0;
-    }
-    if (locZoomAnim) {
-      cancelAnimationFrame(locZoomAnim);
-      locZoomAnim = 0;
-    }
-  }
-
-  function ensureZoomEase() {
-    if (locZoomTimer) {
-      clearTimeout(locZoomTimer);
-      locZoomTimer = 0;
-    }
-    if (locZoomAnim) return;
-    const step = () => {
-      if (locPinching || locDragging) {
-        locZoomAnim = 0;
-        return;
-      }
-      const diff = locZoomGoal - locZoomLive;
-      if (Math.abs(diff) < 0.01) {
-        locZoomLive = locZoomGoal;
-        applyMapTransform();
-        locZoomAnim = 0;
-        scheduleZoomCommit();
-        return;
-      }
-      locZoomLive += diff * 0.22;
-      applyMapTransform();
-      locZoomAnim = requestAnimationFrame(step);
-    };
-    locZoomAnim = requestAnimationFrame(step);
-  }
-
-  function scheduleZoomCommit() {
-    if (locZoomTimer) clearTimeout(locZoomTimer);
-    locZoomTimer = setTimeout(() => {
-      locZoomTimer = 0;
-      if (locPinching || locDragging) return;
-      const target = Math.max(2, Math.min(18, Math.round(locZoomLive)));
-      if (Math.abs(target - locZoomLive) >= 0.01) {
-        locZoomGoal = target;
-        ensureZoomEase();
-        return;
-      }
-      locZoomGoal = target;
-      locZoomLive = target;
-      if (target === locZoom) {
-        applyMapTransform();
-        return;
-      }
-      locZoom = target;
-      commitLocationMap();
-    }, 120);
-  }
-
-  function nudgeZoom(deltaLevels) {
-    locZoomGoal = Math.max(2, Math.min(18, locZoomGoal + deltaLevels));
-    ensureZoomEase();
-  }
-
-  function snapZoomLevel() {
-    cancelZoomMotion();
-    const target = Math.max(2, Math.min(18, Math.round(locZoomLive)));
-    locZoomGoal = target;
-    locZoomLive = target;
-    if (target === locZoom) {
-      applyMapTransform();
-      return;
-    }
-    locZoom = target;
-    commitLocationMap();
-  }
-
-  function commitLocationMap() {
-    const frame = locationFrame();
-    if (!frame) return;
-    const src = locationMapSrc(locView.lat, locView.lng, locZoom);
-    if (frame.getAttribute("data-src") === src) {
-      settleLocationMap();
-      return;
-    }
-    const gen = ++locMapGen;
-    const clearShift = () => {
-      if (gen !== locMapGen || locDragging) return;
-      settleLocationMap();
-    };
-    frame.onload = clearShift;
-    frame.setAttribute("data-src", src);
-    frame.src = src;
-    setTimeout(clearShift, 4000);
-  }
-
-  function showLocationMapNow() {
-    const frame = locationFrame();
-    if (!frame) return;
-    const src = locationMapSrc(locView.lat, locView.lng, locZoom);
-    frame.style.transform = "";
-    frame.onload = null;
-    frame.setAttribute("data-src", src);
-    frame.src = src;
-    paintLocationChrome();
-    placeLocationPin();
-  }
-
-  function placeLabelFromProps(props) {
-    const p = props || {};
-    const name = String(p.name || p.street || p.city || p.state || "").trim();
-    const parts = [p.housenumber ? String(p.street || "") + " " + p.housenumber : "", p.street, p.city, p.state, p.country];
-    const hint = parts
-      .map((part) => String(part || "").trim())
-      .filter((part, i, arr) => part && part !== name && arr.indexOf(part) === i)
-      .join(", ");
-    return [name, hint].filter(Boolean).join(", ");
+  function placeLabelFromFeature(feature) {
+    const suggestion = photonSuggestion(feature, 0);
+    return suggestion ? [suggestion.label, suggestion.hint].filter(Boolean).join(", ") : "";
   }
 
   function photonFeatures(json) {
@@ -5523,29 +5469,28 @@ let FILTER_LOW_REP = 20;
       "&lon=" +
       encodeURIComponent(lng) +
       "&lang=en";
-    fetch(url)
+    const ctrl = new AbortController();
+    const timer = window.setTimeout(() => ctrl.abort(), 8000);
+    fetch(url, { signal: ctrl.signal })
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
         if (seq !== locRevSeq || session !== locSession || !locDescAuto) return;
         const feature = photonFeatures(json)[0];
-        const label = feature ? placeLabelFromProps(feature.properties) : "";
+        const label = feature ? placeLabelFromFeature(feature) : "";
         desc.value = label || lat.toFixed(5) + ", " + lng.toFixed(5);
       })
       .catch(() => {
         if (seq !== locRevSeq || session !== locSession || !locDescAuto) return;
         if (!desc.value.trim()) desc.value = lat.toFixed(5) + ", " + lng.toFixed(5);
-      });
+      })
+      .finally(() => clearTimeout(timer));
   }
 
   function moveLocationPin(ll, zoom, address, keepView) {
     locCenter = { lat: clampLocLat(ll.lat), lng: wrapLocLng(ll.lng) };
     if (!keepView) {
       locView = { lat: locCenter.lat, lng: locCenter.lng };
-      if (zoom) {
-        locZoom = Math.max(2, Math.min(18, zoom));
-        locZoomLive = locZoom;
-        locZoomGoal = locZoom;
-      }
+      if (zoom) locZoom = clampLocationZoom(zoom);
     }
     locPicked = true;
     const desc = $("#locationDescription");
@@ -5556,21 +5501,12 @@ let FILTER_LOW_REP = 20;
       fillDescriptionFor(locCenter.lat, locCenter.lng);
     }
     paintLocationChrome();
-    if (keepView) placeLocationPin();
-    else commitLocationMap();
+    if (!keepView) applyLocationCamera(true);
   }
 
   function setLocationZoom(next) {
-    const z = Math.max(2, Math.min(18, Math.round(next)));
-    cancelZoomMotion();
-    locZoomGoal = z;
-    locZoomLive = z;
-    if (z === locZoom) {
-      applyMapTransform();
-      return;
-    }
-    locZoom = z;
-    commitLocationMap();
+    locZoom = clampLocationZoom(next);
+    if (locMap) locMap.easeTo({ zoom: locZoom, duration: 200 });
   }
 
   function closeLocationSuggestions() {
@@ -5634,8 +5570,8 @@ let FILTER_LOW_REP = 20;
     const address = [s.label, s.hint].filter(Boolean).join(", ");
     if (input) input.value = address;
     closeLocationSuggestions();
-    locZoom = Math.max(locZoom, 15);
-    moveLocationPin({ lat: s.lat, lng: s.lng }, locZoom, address);
+    const zoom = Math.max(locMap ? locMap.getZoom() : locZoom, 15);
+    moveLocationPin({ lat: s.lat, lng: s.lng }, zoom, address);
     setLocationStatus("");
   }
 
@@ -5650,6 +5586,8 @@ let FILTER_LOW_REP = 20;
     const ctrl = new AbortController();
     locSearchAbort = ctrl;
     const session = locSession;
+    const timer = window.setTimeout(() => ctrl.abort(), 8000);
+    setLocationStatus("");
     paintLocationSuggestions("busy");
     fetch(
       "https://photon.komoot.io/api/?limit=6&lang=en&q=" + encodeURIComponent(q),
@@ -5661,42 +5599,27 @@ let FILTER_LOW_REP = 20;
       })
       .then((json) => {
         if (session !== locSession || ctrl.signal.aborted) return;
+        const current = (($("#locationSearch") && $("#locationSearch").value) || "").trim();
+        if (current !== q) return;
         locSuggests = photonFeatures(json)
-          .map((f, i) => {
-            const coords = f.geometry && f.geometry.coordinates;
-            if (!coords || coords.length < 2) return null;
-            const lng = Number(coords[0]);
-            const lat = Number(coords[1]);
-            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-            const p = f.properties || {};
-            const label = String(p.name || p.street || p.city || p.state || "").trim();
-            if (!label) return null;
-            const hint = [p.street, p.city, p.state, p.country]
-              .map((part) => String(part || "").trim())
-              .filter((part, idx, arr) => part && part !== label && arr.indexOf(part) === idx)
-              .join(", ");
-            return { id: String(p.osm_id || i), label, hint, lat, lng };
-          })
+          .map((feature, i) => photonSuggestion(feature, i))
           .filter(Boolean);
         locSuggestActive = locSuggests.length ? 0 : -1;
         paintLocationSuggestions(locSuggests.length ? "list" : "empty");
       })
       .catch((err) => {
-        if (err && err.name === "AbortError") return;
         if (session !== locSession) return;
+        if (err && err.name === "AbortError") {
+          if (locSearchAbort !== ctrl) return;
+          locSuggests = [];
+          paintLocationSuggestions("empty");
+          setLocationStatus("Address search timed out. Try again.", true);
+          return;
+        }
         locSuggests = [];
         paintLocationSuggestions("empty");
-      });
-  }
-
-  function scheduleLocationSearch() {
-    const input = $("#locationSearch");
-    const q = input ? input.value : "";
-    if (locSearchTimer) clearTimeout(locSearchTimer);
-    locSearchTimer = setTimeout(() => {
-      locSearchTimer = 0;
-      runLocationSearch(q);
-    }, 300);
+      })
+      .finally(() => clearTimeout(timer));
   }
 
   function useDeviceLocation() {
@@ -5716,10 +5639,10 @@ let FILTER_LOW_REP = 20;
         const input = $("#locationSearch");
         if (input) input.value = "";
         closeLocationSuggestions();
-        locZoom = Math.max(locZoom, 15);
+        const zoom = Math.max(locMap ? locMap.getZoom() : locZoom, 15);
         moveLocationPin(
           { lat: pos.coords.latitude, lng: pos.coords.longitude },
-          locZoom
+          zoom
         );
       },
       () => {
@@ -5746,15 +5669,8 @@ let FILTER_LOW_REP = 20;
     locCenter = existing
       ? { lat: existing.lat, lng: existing.lng }
       : { lat: 20, lng: 0 };
-    locView = { lat: locCenter.lat, lng: locCenter.lng };
-    locZoom = existing ? 14 : 2;
-    locZoomLive = locZoom;
-    locZoomGoal = locZoom;
-    locPanX = 0;
-    locPanY = 0;
-    locPinching = false;
-    locPointers.clear();
-    cancelZoomMotion();
+    locView = existing ? { lat: locCenter.lat, lng: locCenter.lng } : { lat: 0, lng: 0 };
+    locZoom = existing ? 14 : 0;
     locDescAuto = !(existing && existing.description);
     locSuggests = [];
     locSuggestActive = -1;
@@ -5767,7 +5683,9 @@ let FILTER_LOW_REP = 20;
     closeLocationSuggestions();
     setLocationStatus("");
     ov.hidden = false;
-    showLocationMapNow();
+    paintLocationChrome();
+    const session = locSession;
+    showLocationMap(session);
     if (locPicked && locDescAuto) fillDescriptionFor(locCenter.lat, locCenter.lng);
     if (!isMobileViewport() && search) search.focus();
   }
@@ -5833,12 +5751,12 @@ let FILTER_LOW_REP = 20;
       }
       if (e.target.closest("#locationZoomIn")) {
         e.preventDefault();
-        setLocationZoom(locZoom + 1);
+        setLocationZoom((locMap ? locMap.getZoom() : locZoom) + 1);
         return;
       }
       if (e.target.closest("#locationZoomOut")) {
         e.preventDefault();
-        setLocationZoom(locZoom - 1);
+        setLocationZoom((locMap ? locMap.getZoom() : locZoom) - 1);
       }
     });
     ov.addEventListener("keydown", (e) => {
@@ -5856,17 +5774,30 @@ let FILTER_LOW_REP = 20;
     const search = $("#locationSearch");
     if (search) {
       search.addEventListener("input", () => {
-        scheduleLocationSearch();
+        if (locSearchAbort) {
+          locSearchAbort.abort();
+          locSearchAbort = null;
+        }
+        locSuggests = [];
+        closeLocationSuggestions();
+        setLocationStatus("");
+      });
+      search.addEventListener("search", () => {
+        if (search.value.trim()) return;
+        if (locSearchAbort) {
+          locSearchAbort.abort();
+          locSearchAbort = null;
+        }
+        locSuggests = [];
+        closeLocationSuggestions();
+        setLocationStatus("");
       });
       search.addEventListener("keydown", (e) => {
         const box = $("#locationSuggestions");
         const open = box && !box.hidden && locSuggests.length;
         if (e.key === "ArrowDown") {
+          if (!open) return;
           e.preventDefault();
-          if (!open) {
-            scheduleLocationSearch();
-            return;
-          }
           locSuggestActive = (locSuggestActive + 1) % locSuggests.length;
           paintLocationSuggestions("list");
           return;
@@ -5879,11 +5810,13 @@ let FILTER_LOW_REP = 20;
           return;
         }
         if (e.key === "Enter") {
+          e.preventDefault();
           if (open && locSuggestActive >= 0) {
-            e.preventDefault();
             e.stopPropagation();
             selectLocationSuggestion(locSuggestActive);
+            return;
           }
+          runLocationSearch(search.value);
           return;
         }
         if (e.key === "Escape" && box && !box.hidden) {
@@ -5908,125 +5841,6 @@ let FILTER_LOW_REP = 20;
         locDescAuto = !String(desc.value || "").trim();
         locRevSeq++;
       });
-    }
-    const hit = $("#locationMapHit");
-    if (hit) {
-      function pointerSpan() {
-        const pts = Array.from(locPointers.values());
-        if (pts.length < 2) return 0;
-        return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-      }
-      function beginPinch() {
-        cancelZoomMotion();
-        locPinching = true;
-        locDragging = false;
-        locPanX = 0;
-        locPanY = 0;
-        const map = $("#locationMap");
-        if (map) map.classList.remove("is-panning");
-        locPinchDist = pointerSpan();
-        locPinchZoom = locZoomLive;
-      }
-      function updatePinch() {
-        const dist = pointerSpan();
-        if (locPinchDist < 10 || dist < 10) return;
-        const z = Math.max(2, Math.min(18, locPinchZoom + Math.log2(dist / locPinchDist)));
-        locZoomGoal = z;
-        locZoomLive = z;
-        applyMapTransform();
-      }
-      hit.addEventListener(
-        "wheel",
-        (e) => {
-          e.preventDefault();
-          if (locDragging || locPinching) return;
-          let dy = e.deltaY;
-          if (e.deltaMode === 1) dy *= 32;
-          else if (e.deltaMode === 2) dy *= 800;
-          nudgeZoom(-dy / 100);
-        },
-        { passive: false }
-      );
-      hit.addEventListener("pointerdown", (e) => {
-        if (e.pointerType === "mouse" && e.button !== 0) return;
-        try {
-          hit.setPointerCapture(e.pointerId);
-        } catch (err) {
-          /* synthetic pointers have nothing to capture */
-        }
-        locPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-        if (locPointers.size >= 2) {
-          beginPinch();
-          return;
-        }
-        snapZoomLevel();
-        locDragging = true;
-        hit.dataset.dragX = String(e.clientX);
-        hit.dataset.dragY = String(e.clientY);
-        hit.dataset.dragMoved = "";
-      });
-      hit.addEventListener("pointermove", (e) => {
-        if (!locPointers.has(e.pointerId) && !locDragging) return;
-        if (locPointers.has(e.pointerId)) {
-          locPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-        }
-        if (locPointers.size >= 2) {
-          if (!locPinching) beginPinch();
-          updatePinch();
-          return;
-        }
-        if (!locDragging || (e.pointerId && hit.hasPointerCapture && !hit.hasPointerCapture(e.pointerId) && e.isPrimary === false)) {
-          return;
-        }
-        const x0 = Number(hit.dataset.dragX);
-        const y0 = Number(hit.dataset.dragY);
-        const dx = e.clientX - x0;
-        const dy = e.clientY - y0;
-        if (Math.abs(dx) > 4 || Math.abs(dy) > 4) hit.dataset.dragMoved = "1";
-        const map = $("#locationMap");
-        if (map) map.classList.add("is-panning");
-        shiftLocationMap(dx, dy);
-      });
-      const endDrag = (e) => {
-        if (locPinching || locPointers.size >= 2) {
-          locDragging = false;
-          return;
-        }
-        if (!locDragging) return;
-        locDragging = false;
-        const x0 = Number(hit.dataset.dragX);
-        const y0 = Number(hit.dataset.dragY);
-        const dx = e.clientX - x0;
-        const dy = e.clientY - y0;
-        const moved = hit.dataset.dragMoved === "1";
-        if (!moved) {
-          locPanX = 0;
-          locPanY = 0;
-          const map = $("#locationMap");
-          if (map) map.classList.remove("is-panning");
-          applyMapTransform();
-          const rect = hit.getBoundingClientRect();
-          const ox = e.clientX - (rect.left + rect.width / 2);
-          const oy = e.clientY - (rect.top + rect.height / 2) + LOCATION_MAP_CROP / 2;
-          const next = pointAtPixel(locView.lat, locView.lng, locZoom, ox, oy);
-          moveLocationPin(next, 0, "", true);
-          return;
-        }
-        locView = pointAtPixel(locView.lat, locView.lng, locZoom, -dx, -dy);
-        commitLocationMap();
-      };
-      const endPointer = (e) => {
-        locPointers.delete(e.pointerId);
-        if (locPinching && locPointers.size < 2) {
-          locPinching = false;
-          locDragging = false;
-          scheduleZoomCommit();
-          return;
-        }
-        endDrag(e);
-      };
-      hit.addEventListener("pointerup", endPointer);
-      hit.addEventListener("pointercancel", endPointer);
     }
   }
 
@@ -6085,60 +5899,6 @@ let FILTER_LOW_REP = 20;
     navigate(appHref(back.startsWith("/") ? back : "/" + back), true);
   }
 
-  // Pop until the address leaves /publish. The map iframe shares session
-  // history, and one back() often only restores the map. A parent popstate
-  // does not fire for that, so keep going until the page underneath is current.
-  function leavePublishEntry() {
-    const gen = ++publishLeaveGen;
-    let hops = 0;
-    const finish = () => {
-      if (gen !== publishLeaveGen) return;
-      publishLeaveGen = 0;
-      if (parseRoute().name === "publish") {
-        replaceOffPublish();
-        return;
-      }
-      route();
-    };
-    const step = () => {
-      if (gen !== publishLeaveGen) return;
-      if (parseRoute().name !== "publish") {
-        finish();
-        return;
-      }
-      if (hops >= 30 || (window.navigation && navigation.canGoBack === false)) {
-        finish();
-        return;
-      }
-      hops += 1;
-      const href = location.href;
-      let sawPop = false;
-      const onPop = () => {
-        if (sawPop) return;
-        sawPop = true;
-        window.removeEventListener("popstate", onPop);
-        if (gen !== publishLeaveGen) return;
-        step();
-      };
-      window.addEventListener("popstate", onPop);
-      history.back();
-      window.setTimeout(() => {
-        if (gen !== publishLeaveGen || sawPop) return;
-        if (location.href !== href) {
-          window.setTimeout(() => {
-            if (gen !== publishLeaveGen || sawPop) return;
-            window.removeEventListener("popstate", onPop);
-            step();
-          }, 120);
-          return;
-        }
-        window.removeEventListener("popstate", onPop);
-        step();
-      }, 160);
-    };
-    step();
-  }
-
   function closePublish(opts) {
     hidePublishOverlay(opts);
     if (parseRoute().name !== "publish") return;
@@ -6146,7 +5906,11 @@ let FILTER_LOW_REP = 20;
     // opened from the feed stays open, instead of replacing it with the feed.
     if (publishNavPushed) {
       publishNavPushed = false;
-      leavePublishEntry();
+      const href = location.href;
+      history.back();
+      window.setTimeout(() => {
+        if (location.href === href && parseRoute().name === "publish") replaceOffPublish();
+      }, 250);
       return;
     }
     replaceOffPublish();

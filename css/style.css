@@ -4246,6 +4246,18 @@ body:has(#publishOverlay:not([hidden])) {
   margin-bottom: 0;
 }
 
+.location-card #locationSearch::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 0.9rem;
+  width: 0.9rem;
+  margin-right: 0.1rem;
+  background-color: var(--gray);
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path stroke='%23000' stroke-width='1.6' d='M2.2 2.2 9.8 9.8M9.8 2.2 2.2 9.8'/></svg>") center / contain no-repeat;
+  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path stroke='%23000' stroke-width='1.6' d='M2.2 2.2 9.8 9.8M9.8 2.2 2.2 9.8'/></svg>") center / contain no-repeat;
+  cursor: pointer;
+}
+
 .location-locate {
   appearance: none;
   flex: 0 0 auto;
@@ -4318,59 +4330,81 @@ body:has(#publishOverlay:not([hidden])) {
 }
 
 .location-map {
-  --location-crop: 48px;
   position: relative;
   z-index: 1;
   height: 20rem;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
-  background: #e5e3df;
+  background: #e8e4dc;
 }
 
-.location-map-frame {
+.location-map-canvas {
   position: absolute;
-  left: 0;
-  right: 0;
-  top: calc(var(--location-crop) * -1);
-  width: 100%;
-  height: calc(100% + var(--location-crop));
-  border: 0;
-  pointer-events: none;
-  transform-origin: center center;
+  inset: 0;
 }
 
-.location-map.is-zooming .location-map-frame {
-  will-change: transform;
+/* MapLibre's .maplibregl-map is position:relative and loads after this file.
+   Two classes keep the canvas filling the frame; otherwise the box collapses
+   to 0 height and clicks land on the frame instead of the map. */
+.location-map-canvas.maplibregl-map {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+}
+
+.location-map[data-state="loading"]::before,
+.location-map[data-state="error"]::before {
+  content: "Loading map…";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: #666;
+  pointer-events: none;
+}
+
+.location-map[data-state="error"]::before {
+  content: "Couldn't load the map.";
+  color: var(--red-bright);
 }
 
 .location-pin {
-  position: absolute;
-  left: 50%;
-  top: calc(50% - var(--location-crop) / 2);
-  z-index: 2;
-  transform: translate(-50%, -100%);
+  width: 30px;
+  height: 42px;
+  line-height: 0;
   pointer-events: none;
   filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.35));
 }
 
-.location-map-hit {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  cursor: grab;
-  touch-action: none;
+.location-pin svg {
+  display: block;
 }
 
-.location-map.is-panning .location-map-hit {
-  cursor: grabbing;
+.location-map .maplibregl-ctrl-bottom-left {
+  z-index: 2;
+}
+
+.location-map .maplibregl-ctrl-attrib {
+  font-size: 10px;
+  line-height: 1.3;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.location-map .maplibregl-ctrl-attrib a {
+  color: #333;
 }
 
 .location-zoom {
   position: absolute;
   right: 0.6rem;
   bottom: 1.6rem;
-  z-index: 4;
+  z-index: 3;
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
@@ -4412,6 +4446,10 @@ body:has(#publishOverlay:not([hidden])) {
 
 .location-card #locationDescription {
   margin-bottom: 0.85rem;
+}
+
+#locationSave:disabled {
+  cursor: default;
 }
 
 .location-status {
