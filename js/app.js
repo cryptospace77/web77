@@ -2795,7 +2795,33 @@ let FILTER_LOW_REP = 20;
     return "";
   }
 
+  function communityNumber(name) {
+    const n = normalizeCommunityName(name);
+    const m = /^hive-(\d+)$/.exec(n);
+    return m ? m[1] : "";
+  }
+
+  // hive-121566 or the bare community number 121566.
+  function communityFromToken(raw) {
+    const named = normalizeCommunityName(raw);
+    if (named) return named;
+    const s = String(raw || "").trim();
+    if (!/^\d+$/.test(s)) return "";
+    const id = "hive-" + s;
+    return isCommunityName(id) ? id : "";
+  }
+
+  // Latest is /subspace/121566. Other pages keep a suffix, /subspace/121566/trending.
   function pathForCommunity(name, page) {
+    const num = communityNumber(name);
+    if (!num) return "/";
+    const p = normalizeCommunityPage(page) || "latest";
+    if (p === "latest") return "/subspace/" + num;
+    return "/subspace/" + num + "/" + p;
+  }
+
+  // /c/hive-121566 still opens the community and stays on that path.
+  function pathForOldCommunity(name, page) {
     const n = normalizeCommunityName(name);
     if (!n) return "/";
     const p = normalizeCommunityPage(page) || "latest";
@@ -2804,6 +2830,23 @@ let FILTER_LOW_REP = 20;
 
   function communityHref(name, page) {
     return appHref(pathForCommunity(name, page));
+  }
+
+  // /c/hive-<number> keeps its own canonical path. A bare /<number>, /subspace/
+  // aliases, and older sort-prefixed community URLs are replaced with /subspace/<number>.
+  function communityRedirectTarget(pathname, route) {
+    const parts = String(pathname || "/")
+      .split("/")
+      .filter(Boolean);
+    if (parts[0] === "index.html") parts.shift();
+    const here = parts.length ? "/" + parts.join("/") : "/";
+    const first = (parts[0] || "").toLowerCase();
+    if (first === "c") {
+      const oldPath = pathForOldCommunity(route.community, route.page);
+      return here === oldPath ? "" : oldPath;
+    }
+    const canonical = pathForCommunity(route.community, route.page);
+    return here === canonical ? "" : canonical;
   }
 
   function normalizeProfilePage(raw) {
@@ -2962,6 +3005,18 @@ let FILTER_LOW_REP = 20;
       return { name: "notfound" };
     }
 
+    if (first === "subspace") {
+      if (parts.length < 2 || parts.length > 3) return { name: "notfound" };
+      const community = communityFromToken(parts[1]);
+      if (!community) return { name: "notfound" };
+      if (parts.length === 2) {
+        return { name: "community", community, page: "latest" };
+      }
+      const page = normalizeCommunityPage(parts[2]);
+      if (page) return { name: "community", community, page };
+      return { name: "notfound" };
+    }
+
     let sort = "";
     if (first === "created" || first === "latest") sort = "latest";
     // /space/<tag> is the neutral tag URL. Same latest feed as /latest/<tag> and /created/<tag>.
@@ -2982,6 +3037,13 @@ let FILTER_LOW_REP = 20;
         }
       }
       return { name: "notfound" };
+    }
+
+    // /121566 is the community page and is redirected to /subspace/121566.
+    if (/^\d+$/.test(first) && parts.length <= 2) {
+      const community = communityFromToken(first);
+      const page = parts.length === 1 ? "latest" : normalizeCommunityPage(parts[1]);
+      if (community && page) return { name: "community", community, page };
     }
 
     const at = parts.findIndex((p) => p.startsWith("@"));
@@ -10039,6 +10101,14 @@ let FILTER_LOW_REP = 20;
       return;
     }
     const key = routeKey(r);
+    if (r.name === "community") {
+      const here = currentPath().replace(/\/+$/, "") || "/";
+      const target = communityRedirectTarget(here, r);
+      if (target) {
+        navigate(appHref(target), true);
+        return;
+      }
+    }
     const sameView = Boolean(key && key === currentViewKey && view.innerHTML.trim());
     // A post opened from the feed stays up under the publish dialog. Closing
     // the dialog returns to that post instead of the feed underneath.
@@ -10132,12 +10202,6 @@ let FILTER_LOW_REP = 20;
       return;
     }
     if (r.name === "community") {
-      const canonical = pathForCommunity(r.community, r.page);
-      const here = currentPath().replace(/\/+$/, "") || "/";
-      if (here !== canonical) {
-        navigate(appHref(canonical), true);
-        return;
-      }
       await renderCommunity(r.community, r.page);
       currentViewKey = key;
       return;
