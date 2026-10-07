@@ -904,6 +904,336 @@
     return out;
   }
 
+  // Presentational tags and the text containers Hive posts use the same way.
+  // CommonMark treats many of these as raw HTML and does not parse inside them.
+  const STYLING_HTML_TAGS = new Set(
+    (
+      "center div span font p blockquote figure figcaption " +
+      "h1 h2 h3 h4 h5 h6 td th caption li dt dd " +
+      "section article header footer aside address details summary " +
+      "b i u s strike big small sup sub mark tt em strong del ins cite abbr q"
+    ).split(" ")
+  );
+
+  // Tags whose element, once opened at the start of a line, swallows following markdown.
+  const HTML_BLOCK_TAGS = new Set(
+    (
+      "address article aside blockquote caption center dd details dialog div dl dt " +
+      "fieldset figcaption figure footer form h1 h2 h3 h4 h5 h6 header hr li main nav " +
+      "ol p pre section script style summary table tbody td textarea tfoot th thead tr ul"
+    ).split(" ")
+  );
+
+  const SKIP_MARKDOWN_TAGS = new Set(["pre", "code", "script", "style", "textarea"]);
+  const VOID_HTML_TAGS = new Set([
+    "hr",
+    "br",
+    "img",
+    "source",
+    "col",
+    "link",
+    "meta",
+    "input",
+    "wbr",
+    "area",
+    "base",
+    "embed",
+    "param",
+    "track",
+  ]);
+
+  function parseHtmlTagAt(s, i) {
+    if (s.charAt(i) !== "<") return null;
+    if (s.startsWith("<!--", i) || s.startsWith("<!", i) || s.startsWith("<?", i)) return null;
+    let j = i + 1;
+    let closing = false;
+    if (s.charAt(j) === "/") {
+      closing = true;
+      j++;
+    }
+    const nameMatch = /^[A-Za-z][A-Za-z0-9]*/.exec(s.slice(j));
+    if (!nameMatch) return null;
+    const name = nameMatch[0];
+    j += name.length;
+    let quote = "";
+    let selfClosing = false;
+    for (; j < s.length; j++) {
+      const ch = s.charAt(j);
+      if (quote) {
+        if (ch === quote) quote = "";
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch;
+        continue;
+      }
+      if (ch === "/" && s.charAt(j + 1) === ">") {
+        selfClosing = true;
+        j += 2;
+        break;
+      }
+      if (ch === ">") {
+        j++;
+        break;
+      }
+    }
+    if (quote || s.charAt(j - 1) !== ">") return null;
+    return {
+      name: name,
+      raw: s.slice(i, j),
+      end: j,
+      closing: closing,
+      selfClosing: selfClosing || VOID_HTML_TAGS.has(name.toLowerCase()),
+    };
+  }
+
+  function findCloseTag(s, from, name) {
+    let depth = 1;
+    let i = from;
+    const want = name.toLowerCase();
+    while (i < s.length) {
+      if (s.startsWith("<!--", i)) {
+        const end = s.indexOf("-->", i + 4);
+        i = end < 0 ? s.length : end + 3;
+        continue;
+      }
+      if (s.charAt(i) !== "<") {
+        i++;
+        continue;
+      }
+      const tag = parseHtmlTagAt(s, i);
+      if (!tag) {
+        i++;
+        continue;
+      }
+      if (!tag.selfClosing && tag.name.toLowerCase() === want) {
+        if (tag.closing) {
+          depth--;
+          if (depth === 0) return { start: i, end: tag.end, raw: tag.raw };
+        } else {
+          depth++;
+        }
+      }
+      i = tag.end;
+    }
+    return null;
+  }
+
+  function readCodeSpan(s, i) {
+    let n = 0;
+    while (s.charAt(i + n) === "`") n++;
+    if (!n) return null;
+    let j = i + n;
+    while (j < s.length) {
+      if (s.charAt(j) === "\n") return null;
+      if (s.charAt(j) !== "`") {
+        j++;
+        continue;
+      }
+      let k = 0;
+      while (s.charAt(j + k) === "`") k++;
+      if (k === n) return { raw: s.slice(i, j + k), end: j + k };
+      j += k;
+    }
+    return null;
+  }
+
+  function skipFenceLine(s, i, state) {
+    if (!(i === 0 || s.charAt(i - 1) === "\n")) return -1;
+    const nl = s.indexOf("\n", i);
+    const line = nl < 0 ? s.slice(i) : s.slice(i, nl);
+    const fence = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(line);
+    if (!fence) return -1;
+    const mark = fence[1][0];
+    if (!state.inFence) {
+      state.inFence = true;
+      state.fenceMark = mark;
+    } else if (mark === state.fenceMark) {
+      state.inFence = false;
+      state.fenceMark = "";
+    } else {
+      return -1;
+    }
+    return nl < 0 ? s.length : nl + 1;
+  }
+
+  function markdownSignalText(s) {
+    return String(s)
+      .replace(/<!--[\s\S]*?-->/g, " ")
+      .replace(/<\/?[A-Za-z][^>\n]*>/g, " ");
+  }
+
+  function looksLikeMarkdown(s) {
+    const text = markdownSignalText(s);
+    if (/[*_~`\[!]/.test(text)) return true;
+    if (/<[A-Za-z][A-Za-z0-9+.-]*:/.test(text)) return true;
+    if (/^#{1,6}(?:\s|$)/m.test(text)) return true;
+    if (/^[ \t]{0,3}(?:>|[-+*](?:\s|$)|\d+\.\s)/m.test(text)) return true;
+    if (/^[ \t]{0,3}(?:-{3,}|\*{3,}|_{3,})[ \t]*$/m.test(text)) return true;
+    return false;
+  }
+
+  function parseWithMarked(src) {
+    ensureMarked();
+    const parse =
+      global.marked &&
+      (typeof global.marked.parse === "function"
+        ? global.marked.parse.bind(global.marked)
+        : typeof global.marked === "function"
+          ? global.marked
+          : null);
+    if (!parse) return null;
+    try {
+      return parse(src);
+    } catch {
+      return null;
+    }
+  }
+
+  function unwrapSingleParagraph(html) {
+    const m = /^<p>([\s\S]*)<\/p>\n?$/.exec(html);
+    if (!m || /<\/p>/i.test(m[1])) return html;
+    return m[1];
+  }
+
+  function renderTextSegment(src) {
+    if (!src || !looksLikeMarkdown(src)) return src;
+    const html = parseWithMarked(src);
+    if (html == null) return src;
+    return unwrapSingleParagraph(html);
+  }
+
+  // Parse markdown that sits beside HTML blocks. A block element on a line would
+  // otherwise swallow the rest of that line, including a sibling *italic*.
+  function parseMarkdownAroundHtmlBlocks(src) {
+    const s = String(src || "");
+    if (!looksLikeMarkdown(s)) return s;
+    const parts = [];
+    let i = 0;
+    let textStart = 0;
+    const fence = { inFence: false, fenceMark: "" };
+    while (i < s.length) {
+      const fenceEnd = skipFenceLine(s, i, fence);
+      if (fenceEnd >= 0) {
+        i = fenceEnd;
+        continue;
+      }
+      if (fence.inFence) {
+        i++;
+        continue;
+      }
+      if (s.charAt(i) === "`") {
+        const span = readCodeSpan(s, i);
+        if (span) {
+          i = span.end;
+          continue;
+        }
+      }
+      if (s.startsWith("<!--", i)) {
+        const end = s.indexOf("-->", i + 4);
+        i = end < 0 ? s.length : end + 3;
+        continue;
+      }
+      if (s.charAt(i) !== "<") {
+        i++;
+        continue;
+      }
+      const tag = parseHtmlTagAt(s, i);
+      if (!tag || tag.closing || !HTML_BLOCK_TAGS.has(tag.name.toLowerCase())) {
+        i = tag && !tag.closing ? tag.end : i + 1;
+        continue;
+      }
+      let end = tag.end;
+      if (!tag.selfClosing) {
+        const close = findCloseTag(s, tag.end, tag.name);
+        if (!close) {
+          i = tag.end;
+          continue;
+        }
+        end = close.end;
+      }
+      if (i > textStart) parts.push(s.slice(textStart, i));
+      parts.push({ html: s.slice(i, end) });
+      i = end;
+      textStart = end;
+    }
+    if (!parts.length) return renderTextSegment(s);
+    if (textStart < s.length) parts.push(s.slice(textStart));
+    let out = "";
+    for (let n = 0; n < parts.length; n++) {
+      const part = parts[n];
+      out += typeof part === "string" ? renderTextSegment(part) : part.html;
+    }
+    return out;
+  }
+
+  function renderMarkdownInStylingTags(src) {
+    const s = String(src || "");
+    let out = "";
+    let i = 0;
+    const fence = { inFence: false, fenceMark: "" };
+    while (i < s.length) {
+      const fenceEnd = skipFenceLine(s, i, fence);
+      if (fenceEnd >= 0) {
+        out += s.slice(i, fenceEnd);
+        i = fenceEnd;
+        continue;
+      }
+      if (fence.inFence) {
+        out += s.charAt(i);
+        i++;
+        continue;
+      }
+      if (s.charAt(i) === "`") {
+        const span = readCodeSpan(s, i);
+        if (span) {
+          out += span.raw;
+          i = span.end;
+          continue;
+        }
+      }
+      if (s.startsWith("<!--", i)) {
+        const end = s.indexOf("-->", i + 4);
+        const to = end < 0 ? s.length : end + 3;
+        out += s.slice(i, to);
+        i = to;
+        continue;
+      }
+      if (s.charAt(i) === "<") {
+        const tag = parseHtmlTagAt(s, i);
+        if (tag && !tag.closing && !tag.selfClosing) {
+          const name = tag.name.toLowerCase();
+          if (SKIP_MARKDOWN_TAGS.has(name)) {
+            const close = findCloseTag(s, tag.end, tag.name);
+            if (close) {
+              out += s.slice(i, close.end);
+              i = close.end;
+              continue;
+            }
+          } else if (STYLING_HTML_TAGS.has(name)) {
+            const close = findCloseTag(s, tag.end, tag.name);
+            if (close) {
+              let inner = s.slice(tag.end, close.start);
+              inner = renderMarkdownInStylingTags(inner);
+              inner = parseMarkdownAroundHtmlBlocks(inner);
+              out += tag.raw + inner + close.raw;
+              i = close.end;
+              continue;
+            }
+          }
+        }
+        if (tag) {
+          out += tag.raw;
+          i = tag.end;
+          continue;
+        }
+      }
+      out += s.charAt(i);
+      i++;
+    }
+    return out;
+  }
+
   let markedReady = false;
 
   function ensureMarked() {
@@ -918,7 +1248,7 @@
 
   function renderMarkdown(src) {
     ensureMarked();
-    const prepared = preprocessHiveMarkdown(src);
+    const prepared = renderMarkdownInStylingTags(preprocessHiveMarkdown(src));
     let html;
     try {
       const parse =
