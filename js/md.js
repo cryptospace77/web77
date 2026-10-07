@@ -812,6 +812,19 @@
     return !/[a-zA-Z0-9@＠/]/.test(ch);
   }
 
+  // Hive tags are 2–24 chars: a letter, then letters, digits, or hyphens, ending alnum.
+  // Also refuse a match glued to another word, an entity, or a second hash.
+  function isTagBoundary(ch) {
+    if (!ch) return true;
+    return !/[a-zA-Z0-9_#＃&@＠/]/.test(ch);
+  }
+
+  function tagContinues(ch) {
+    if (!ch) return false;
+    if (/[a-zA-Z0-9_-]/.test(ch)) return true;
+    return /\p{L}|\p{N}/u.test(ch);
+  }
+
   function mentionHtml(at, name) {
     const user = String(name || "").toLowerCase();
     return (
@@ -824,8 +837,22 @@
     );
   }
 
-  /** Turn bare @username mentions into profile links. Skip tags and existing links. */
-  function linkifyMentions(html) {
+  function tagHtml(hash, name) {
+    const tag = String(name || "").toLowerCase();
+    const community = /^hive-(\d+)$/.exec(tag);
+    const path = community ? "subspace/" + community[1] : "space/" + tag;
+    return (
+      '<a class="hashtag" href="' +
+      escapeHtml(localAppPrefix() + path) +
+      '">' +
+      hash +
+      escapeHtml(name) +
+      "</a>"
+    );
+  }
+
+  /** Turn bare @username mentions and #tags into local links. Skip HTML tags and existing links. */
+  function linkifyMentionsTags(html) {
     const s = String(html || "");
     let out = "";
     let i = 0;
@@ -859,6 +886,14 @@
         const m = s.slice(i + 1).match(/^([a-z][a-z0-9.\-]*[a-z0-9])/i);
         if (m && m[1].length >= 3 && m[1].length <= 16) {
           out += mentionHtml(at, m[1]);
+          i += 1 + m[1].length;
+          continue;
+        }
+      }
+      if ((at === "#" || at === "＃") && isTagBoundary(s[i - 1])) {
+        const m = s.slice(i + 1).match(/^([a-z][a-z0-9-]{0,22}[a-z0-9])/i);
+        if (m && !tagContinues(s[i + 1 + m[1].length])) {
+          out += tagHtml(at, m[1]);
           i += 1 + m[1].length;
           continue;
         }
@@ -904,7 +939,7 @@
 
     html = embedMedia(html);
     html = localizeHiveLinks(html);
-    html = linkifyMentions(html);
+    html = linkifyMentionsTags(html);
 
     if (global.DOMPurify) {
       html = global.DOMPurify.sanitize(html, {
