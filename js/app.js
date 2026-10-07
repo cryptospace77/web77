@@ -2695,6 +2695,7 @@ let FILTER_LOW_REP = 20;
     feed: true,
     created: true,
     latest: true,
+    space: true,
     trending: true,
     hot: true,
     tags: true,
@@ -2963,6 +2964,8 @@ let FILTER_LOW_REP = 20;
 
     let sort = "";
     if (first === "created" || first === "latest") sort = "latest";
+    // /space/<tag> is the neutral tag URL. Same latest feed as /latest/<tag> and /created/<tag>.
+    else if (first === "space" && parts.length >= 2) sort = "latest";
     else if (first === "feed") sort = "feed";
     else if (first === "trending" || first === "hot") sort = first;
 
@@ -3057,7 +3060,7 @@ let FILTER_LOW_REP = 20;
     if (t) {
       if (sort === "trending") return "/trending/" + t;
       if (sort === "hot") return "/hot/" + t;
-      return "/latest/" + t;
+      return "/space/" + t;
     }
     if (sort === "feed") return "/feed";
     if (sort === "trending") return "/trending";
@@ -3077,7 +3080,7 @@ let FILTER_LOW_REP = 20;
   function tagChipHtml(tag) {
     const t = normalizeRouteTag(tag) || String(tag || "").replace(/^#/, "").trim().toLowerCase();
     if (!t) return "";
-    const href = isCommunityName(t) ? communityHref(t, "latest") : appHref("/latest/" + t);
+    const href = isCommunityName(t) ? communityHref(t, "latest") : appHref("/space/" + t);
     return `<a class="tag" href="${HiveMd.escapeHtml(href)}">#${HiveMd.escapeHtml(t)}</a>`;
   }
 
@@ -3725,7 +3728,7 @@ let FILTER_LOW_REP = 20;
     raw = raw.replace(/^https?:\/\/(?:www\.)?(?:hive\.blog|peakd\.com|ecency\.com)\//i, "");
     raw = raw.replace(/^\//, "");
     const community =
-      raw.match(/(?:^|\/)(?:trending|hot|created|latest)\/(hive-\d+)\b/i) ||
+      raw.match(/(?:^|\/)(?:trending|hot|created|latest|space)\/(hive-\d+)\b/i) ||
       raw.match(/^(?:c\/)?(hive-\d+)\b/i);
     if (community) return communityHref(community[1]);
     const at = raw.indexOf("@");
@@ -5862,7 +5865,7 @@ let FILTER_LOW_REP = 20;
   function favoriteTagHref(tag) {
     const t = normalizeRouteTag(tag);
     if (!t) return appHref("/");
-    return appHref("/latest/" + t);
+    return appHref("/space/" + t);
   }
 
   function setTagsStatus(msg, isError) {

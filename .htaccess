@@ -4,7 +4,7 @@
 # /@username/permlink
 # /c/@username/permlink
 # /trending  /hot  /created  /tags  /welcome  /imprint
-# /trending/tag  /hot/tag  /created/tag
+# /space/tag  /latest/tag  /created/tag  /trending/tag  /hot/tag
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
