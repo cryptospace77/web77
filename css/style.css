@@ -3896,9 +3896,16 @@ a.publish-fab:hover {
   height: 1.25rem;
 }
 
+/* The page behind the publish dialog stays put. Only this layer scrolls. */
+html:has(#publishOverlay:not([hidden])),
+body:has(#publishOverlay:not([hidden])) {
+  overflow: hidden;
+}
+
 #publishOverlay {
   align-items: flex-start;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 #publishDiscard {
