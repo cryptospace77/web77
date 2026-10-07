@@ -8672,7 +8672,7 @@ let FILTER_LOW_REP = 20;
       return;
     }
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const countMs = reduced ? 0 : 900;
+    const countMs = reduced ? 0 : 1500;
     awards.remove();
     for (let i = 0; i < rows.length; i++) {
       rows[i].classList.remove("is-reward-in");
