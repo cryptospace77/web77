@@ -5498,12 +5498,10 @@ let FILTER_LOW_REP = 20;
         if (seq !== locRevSeq || session !== locSession || !locDescAuto) return;
         const feature = photonFeatures(json)[0];
         const label = feature ? placeLabelFromFeature(feature) : "";
-        desc.value = label || lat.toFixed(5) + ", " + lng.toFixed(5);
+        // Coordinates stay in #locationCoords. The description is a place name only.
+        desc.value = label;
       })
-      .catch(() => {
-        if (seq !== locRevSeq || session !== locSession || !locDescAuto) return;
-        if (!desc.value.trim()) desc.value = lat.toFixed(5) + ", " + lng.toFixed(5);
-      })
+      .catch(() => {})
       .finally(() => clearTimeout(timer));
   }
 
