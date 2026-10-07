@@ -6013,7 +6013,10 @@ let FILTER_LOW_REP = 20;
     list.innerHTML = tags
       .map((t) => {
         const safe = HiveMd.escapeHtml(t);
-        return `<button type="button" class="tag tag-suggest" data-add-tag="${safe}" aria-label="Add ${safe} to favorites">#${safe}</button>`;
+        return `<span class="fav-tag-chip">
+          <a class="tag" href="${HiveMd.escapeHtml(favoriteTagHref(t))}">#${safe}</a>
+          <button type="button" class="fav-tag-add" data-add-tag="${safe}" aria-label="Add ${safe} to favorites">++</button>
+        </span>`;
       })
       .join("");
   }

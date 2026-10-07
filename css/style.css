@@ -2529,14 +2529,19 @@ a.tag:hover {
 
 .fav-tag-chip .tag {
   border: none;
-  padding: 0.16rem 0.45rem 0.16rem 0.6rem;
+  padding: 0.16rem 0.16rem 0.16rem 0.3rem;
 }
 
 .fav-tag-chip:hover {
   border-color: var(--yellow);
 }
 
-.fav-tag-remove {
+.fav-tag-chip:hover .tag {
+  color: var(--yellow);
+}
+
+.fav-tag-remove,
+.fav-tag-add {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2555,6 +2560,10 @@ a.tag:hover {
 
 .fav-tag-remove:hover {
   color: var(--red-bright);
+}
+
+.fav-tag-add:hover {
+  color: var(--yellow);
 }
 
 .tags-add {
@@ -2696,18 +2705,6 @@ a.tag:hover {
 .community-fav-btn:hover,
 .community-fav-btn.is-saved {
   color: var(--yellow);
-}
-
-button.tag {
-  font-family: var(--font-mono);
-  background: transparent;
-  cursor: pointer;
-  appearance: none;
-}
-
-button.tag-suggest:hover {
-  color: var(--yellow);
-  border-color: var(--yellow);
 }
 
 .tags-suggest-loading {
