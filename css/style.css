@@ -4820,6 +4820,29 @@ body:has(#publishOverlay:not([hidden])) {
     padding-left: 0.7rem;
   }
 
+  /* One border, same width as the title and tag fields. The wrapper frame
+     inset the textarea by its padding plus its own border. */
+  .comment-composer,
+  .comment-composer.is-dragover {
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .comment-composer.is-dragover .composer-input {
+    border-color: var(--yellow);
+    box-shadow: 0 0 0 1px rgba(255, 225, 74, 0.35), var(--glow-yellow);
+  }
+
+  .composer-input {
+    min-height: 8.5rem;
+  }
+
+  .publish-card .composer-input {
+    min-height: 16rem;
+  }
+
   .composer-bar .composer-actions {
     margin-left: 0;
     width: 100%;
