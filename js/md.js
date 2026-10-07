@@ -1246,6 +1246,38 @@
     markedReady = true;
   }
 
+  // .post-body / .comment-body use overflow:hidden, which clips a table
+  // whose min-content is wider than the column. A scroll box keeps that
+  // width bounded so the table can move sideways instead of being cut off.
+  function wrapWideTables(html) {
+    const src = String(html || "");
+    const re = /<\/?table\b[^>]*>/gi;
+    let out = "";
+    let last = 0;
+    let depth = 0;
+    let start = -1;
+    let m;
+    while ((m = re.exec(src))) {
+      const isClose = m[0].charAt(1) === "/";
+      if (!isClose) {
+        if (depth === 0) start = m.index;
+        depth++;
+      } else if (depth > 0) {
+        depth--;
+        if (depth === 0 && start >= 0) {
+          out += src.slice(last, start);
+          out += '<div class="md-table-scroll">';
+          out += src.slice(start, re.lastIndex);
+          out += "</div>";
+          last = re.lastIndex;
+          start = -1;
+        }
+      }
+    }
+    if (depth !== 0) return src;
+    return out + src.slice(last);
+  }
+
   function renderMarkdown(src) {
     ensureMarked();
     const prepared = renderMarkdownInStylingTags(preprocessHiveMarkdown(src));
@@ -1286,6 +1318,7 @@
         ],
       });
     }
+    html = wrapWideTables(html);
     if (html.indexOf("twitter-tweet") !== -1) queueTwitterWidgets();
     return html;
   }
