@@ -36,7 +36,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&family=Instrument+Serif:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&family=Orbitron:wght@400;600;700;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=0.16.5">
+  <link rel="stylesheet" href="/css/style.css?v=0.16.9">
 </head>
 <body>
   <div class="bg-hex bg-hex-bl" aria-hidden="true"></div>
@@ -239,7 +239,7 @@
         <input class="composer-file" type="file" accept="image/*" multiple hidden>
         <div class="composer-bar">
           <button type="button" class="composer-attach" title="Attach image">Attach image</button>
-          <span class="composer-hint">Drop images to upload.</span>
+          <button type="button" class="composer-attach" id="publishLocationBtn" title="Add location">Add location</button>
         </div>
         <p class="composer-status" hidden></p>
       </div>
@@ -263,6 +263,45 @@
     </div>
   </div>
 
+  <div class="overlay" id="locationOverlay" hidden>
+    <div class="panel overlay-card location-card" role="dialog" aria-modal="true" aria-labelledby="locationTitle">
+      <h2 id="locationTitle">Add location</h2>
+      <div class="location-search" id="locationSearchWrap">
+        <div class="location-search-row">
+          <input id="locationSearch" type="search" autocomplete="off" spellcheck="false" placeholder="Search for an address" role="combobox" aria-expanded="false" aria-controls="locationSuggestions" aria-autocomplete="list">
+          <button type="button" class="location-locate" id="locationLocate">Use my location</button>
+        </div>
+        <div class="location-suggestions" id="locationSuggestions" hidden role="listbox"></div>
+      </div>
+      <div class="location-map" id="locationMap">
+        <iframe class="location-map-frame" id="locationMapFrame" title="Google Map"></iframe>
+        <div class="location-pin" id="locationPin" hidden aria-hidden="true">
+          <svg viewBox="0 0 30 42" width="30" height="42" aria-hidden="true">
+            <path d="M15 0C6.7 0 0 6.7 0 15c0 10.5 13.4 25.4 14 26.1a1.4 1.4 0 0 0 2 0c.6-.7 14-15.6 14-26.1C30 6.7 23.3 0 15 0z" fill="#e31337"/>
+            <circle cx="15" cy="15" r="6" fill="#fff"/>
+          </svg>
+        </div>
+        <div class="location-map-hit" id="locationMapHit"></div>
+        <div class="location-zoom">
+          <button type="button" id="locationZoomIn" aria-label="Zoom in">+</button>
+          <button type="button" id="locationZoomOut" aria-label="Zoom out">−</button>
+        </div>
+      </div>
+      <div class="location-meta">
+        <span id="locationHint">Click the map to place the pin. Drag to move the map.</span>
+        <span id="locationCoords"></span>
+      </div>
+      <label class="login-label" for="locationDescription">Description</label>
+      <input id="locationDescription" type="text" maxlength="250" autocomplete="off" placeholder="Used in the worldmappin geo tag">
+      <p id="locationStatus" class="location-status" role="status" hidden></p>
+      <div class="overlay-actions">
+        <button type="button" class="btn-primary" id="locationSave" disabled>Add</button>
+        <button type="button" class="btn-ghost" id="locationRemove" hidden>Remove</button>
+        <button type="button" class="btn-ghost" id="locationCancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <div class="overlay" id="publishDiscard" hidden>
     <div class="panel overlay-card login-card">
       <h2 id="publishDiscardTitle">Discard post</h2>
@@ -281,6 +320,6 @@
   <script src="/js/hive-auth.js?v=0.16.0"></script>
   <script src="/js/chain-queue.js?v=0.16.0"></script>
   <script src="/js/blacklist.js?v=0.16.0"></script>
-  <script src="/js/app.js?v=0.16.110"></script>
+  <script src="/js/app.js?v=0.16.118"></script>
 </body>
 </html>

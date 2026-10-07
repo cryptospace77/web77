@@ -71,6 +71,9 @@ let FILTER_LOW_REP = 20;
   let publishSubsUser = "";
   let lastNonPublishPath = "/";
   let publishNavPushed = false;
+  // Non-zero while closePublish is popping history past the location map.
+  // Those iframe steps must not run route(), or the dialog opens again.
+  let publishLeaveGen = 0;
   let currentViewKey = "";
   let initialPageLoad = true;
   // Set for a click on the profile nav. route() clears it. Those switches
@@ -3433,6 +3436,14 @@ let FILTER_LOW_REP = 20;
       if (u.pathname === location.pathname && u.hash && !/^#\//.test(u.hash)) return;
       if (u.pathname === location.pathname && u.search === location.search && !u.hash) {
         e.preventDefault();
+        // Closing publish can leave the address on /publish when the location
+        // map iframe took the history step. The link is this same path, so
+        // open the dialog instead of treating it as a no-op.
+        if (parseRoute().name === "publish") {
+          const pub = $("#publishOverlay");
+          if (!pub || pub.hidden) openPublishOverlay();
+          return;
+        }
         // Already on this profile section. Session name / Profile still
         // go to the top. Comments, Replies, and Wallet use the account-menu
         // subpage behavior.
@@ -3463,6 +3474,7 @@ let FILTER_LOW_REP = 20;
   });
 
   window.addEventListener("popstate", () => {
+    if (publishLeaveGen) return;
     if (!HASH_ROUTING) route();
   });
   window.addEventListener("hashchange", () => {
@@ -4922,6 +4934,31 @@ let FILTER_LOW_REP = 20;
 
   let publishTitleDraft = "";
   let publishBodyDraft = "";
+  let locSession = 0;
+  let locMapGen = 0;
+  const LOCATION_MAP_CROP = 48;
+  let locCenter = { lat: 20, lng: 0 };
+  let locView = { lat: 20, lng: 0 };
+  let locZoom = 2;
+  let locZoomLive = 2;
+  let locZoomGoal = 2;
+  let locZoomTimer = 0;
+  let locZoomAnim = 0;
+  let locPanX = 0;
+  let locPanY = 0;
+  let locPinching = false;
+  let locPinchDist = 0;
+  let locPinchZoom = 2;
+  const locPointers = new Map();
+  let locPicked = false;
+  let locDescAuto = true;
+  let locRevSeq = 0;
+  let locHadSaved = false;
+  let locSearchTimer = 0;
+  let locSearchAbort = null;
+  let locSuggests = [];
+  let locSuggestActive = -1;
+  let locDragging = false;
 
   function savePublishDraft() {
     const title = $("#publishTitle");
@@ -5102,6 +5139,895 @@ let FILTER_LOW_REP = 20;
       ? HiveMd.renderMarkdown(body)
       : `<p class="feed-hint">Start writing to see a preview.</p>`;
     preview.innerHTML = heading + html;
+    paintPublishLocationBtn();
+  }
+
+  const WORLDMAPPIN_INNER =
+    "!(?:worldmappin|pinmapple)\\s+(-?\\d+(?:\\.\\d+)?)\\s+lat\\s+(-?\\d+(?:\\.\\d+)?)\\s+long\\s*(.*?)\\s*d3scr";
+
+  function parsePublishLocation(body) {
+    const m = String(body || "").match(new RegExp(WORLDMAPPIN_INNER, "i"));
+    if (!m) return null;
+    const lat = Number(m[1]);
+    const lng = Number(m[2]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+    let description = String(m[3] || "").trim();
+    if (!description || description === "<DESCRIPTION GOES HERE>") description = "";
+    return { lat, lng, description };
+  }
+
+  function stripPublishLocation(src) {
+    return String(src || "")
+      .replace(new RegExp("\\[\\/\\/\\]:\\s*#\\s*\\(" + WORLDMAPPIN_INNER + "\\)", "gi"), "")
+      .replace(new RegExp("<!--\\s*" + WORLDMAPPIN_INNER + "\\s*-->", "gi"), "")
+      .replace(new RegExp("(^|\\n)[ \\t]*" + WORLDMAPPIN_INNER + "[ \\t]*(?=\\n|$)", "gi"), "$1")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
+  function locationMarkerText(lat, lng, description) {
+    const address = String(description || "")
+      .replace(/[()]/g, "")
+      .replace(/[\r\n]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 250);
+    return (
+      "[//]:# (!worldmappin " +
+      Number(lat).toFixed(6) +
+      " lat " +
+      Number(lng).toFixed(6) +
+      " long " +
+      address +
+      " d3scr)"
+    );
+  }
+
+  function bodyWithLocation(body, loc) {
+    const base = stripPublishLocation(body);
+    if (!loc) return base;
+    const marker = locationMarkerText(loc.lat, loc.lng, loc.description);
+    return base ? base + "\n\n" + marker : marker;
+  }
+
+  function applyLocationMetadata(jsonMetadata, body) {
+    const loc = parsePublishLocation(body);
+    if (!loc) {
+      delete jsonMetadata.location;
+      return jsonMetadata;
+    }
+    jsonMetadata.location = {
+      coordinates: {
+        lat: Number(loc.lat.toFixed(3)),
+        lng: Number(loc.lng.toFixed(3)),
+      },
+      address: loc.description || loc.lat.toFixed(5) + ", " + loc.lng.toFixed(5),
+    };
+    return jsonMetadata;
+  }
+
+  function paintPublishLocationBtn() {
+    const btn = $("#publishLocationBtn");
+    if (!btn) return;
+    const loc = parsePublishLocation(($("#publishBody") && $("#publishBody").value) || "");
+    btn.classList.toggle("is-set", Boolean(loc));
+    btn.setAttribute("aria-pressed", loc ? "true" : "false");
+    if (loc) {
+      const label = loc.description || loc.lat.toFixed(4) + ", " + loc.lng.toFixed(4);
+      btn.title = label;
+    } else {
+      btn.title = "Add location";
+    }
+  }
+
+  function locationDialogOpen() {
+    const el = $("#locationOverlay");
+    return Boolean(el && !el.hidden);
+  }
+
+  function hideLocationDialog() {
+    locSession++;
+    locMapGen++;
+    locDragging = false;
+    locPinching = false;
+    locPointers.clear();
+    locPanX = 0;
+    locPanY = 0;
+    cancelZoomMotion();
+    if (locSearchTimer) {
+      clearTimeout(locSearchTimer);
+      locSearchTimer = 0;
+    }
+    if (locSearchAbort) {
+      locSearchAbort.abort();
+      locSearchAbort = null;
+    }
+    const ov = $("#locationOverlay");
+    if (ov) ov.hidden = true;
+  }
+
+  function closeLocationDialog() {
+    hideLocationDialog();
+    const btn = $("#publishLocationBtn");
+    if (btn && !isMobileViewport()) btn.focus();
+  }
+
+  function setLocationStatus(msg, isError) {
+    const el = $("#locationStatus");
+    if (!el) return;
+    if (!msg) {
+      el.hidden = true;
+      el.textContent = "";
+      el.classList.remove("is-error");
+      return;
+    }
+    el.hidden = false;
+    el.textContent = msg;
+    el.classList.toggle("is-error", Boolean(isError));
+  }
+
+  function clampLocLat(lat) {
+    return Math.max(-85, Math.min(85, lat));
+  }
+
+  function wrapLocLng(lng) {
+    return ((((lng + 180) % 360) + 360) % 360) - 180;
+  }
+
+  function worldPoint(lat, lng) {
+    const s = Math.sin((lat * Math.PI) / 180);
+    return {
+      x: (lng + 180) / 360,
+      y: 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI),
+    };
+  }
+
+  function pointToLatLng(x, y) {
+    const yy = Math.max(0, Math.min(1, y));
+    const lng = x * 360 - 180;
+    const n = Math.PI - 2 * Math.PI * yy;
+    const lat = (180 / Math.PI) * Math.atan(Math.sinh(n));
+    return { lat: clampLocLat(lat), lng: wrapLocLng(lng) };
+  }
+
+  function pointAtPixel(lat, lng, zoom, dx, dy) {
+    const scale = 256 * Math.pow(2, zoom);
+    const w = worldPoint(lat, lng);
+    return pointToLatLng(w.x + dx / scale, w.y + dy / scale);
+  }
+
+  function locationMapSrc(lat, lng, zoom) {
+    return (
+      "https://maps.google.com/maps?ll=" +
+      lat.toFixed(6) +
+      "," +
+      lng.toFixed(6) +
+      "&z=" +
+      zoom +
+      "&output=embed"
+    );
+  }
+
+  function locationFrame() {
+    return $("#locationMapFrame");
+  }
+
+  function paintLocationChrome() {
+    const pin = $("#locationPin");
+    if (pin) pin.hidden = !locPicked;
+    const coords = $("#locationCoords");
+    if (coords) {
+      coords.textContent = locPicked
+        ? locCenter.lat.toFixed(5) + ", " + locCenter.lng.toFixed(5)
+        : "";
+    }
+    const save = $("#locationSave");
+    if (save) save.disabled = !locPicked;
+    const remove = $("#locationRemove");
+    if (remove) remove.hidden = !locHadSaved;
+  }
+
+  function pinPixelOffset(pin, view, zoom) {
+    const scale = 256 * Math.pow(2, zoom);
+    const p = worldPoint(pin.lat, pin.lng);
+    const v = worldPoint(view.lat, view.lng);
+    let dxWorld = p.x - v.x;
+    if (dxWorld > 0.5) dxWorld -= 1;
+    if (dxWorld < -0.5) dxWorld += 1;
+    return { dx: dxWorld * scale, dy: (p.y - v.y) * scale };
+  }
+
+  function placeLocationPin() {
+    const pin = $("#locationPin");
+    if (!pin) return;
+    if (!locPicked) {
+      pin.hidden = true;
+      pin.style.left = "";
+      pin.style.top = "";
+      pin.style.transform = "";
+      return;
+    }
+    const off = pinPixelOffset(locCenter, locView, locZoom);
+    const gesture = Math.pow(2, locZoomLive - locZoom);
+    const dx = off.dx * gesture + locPanX;
+    const dy = off.dy * gesture + locPanY;
+    pin.hidden = false;
+    pin.style.left = "calc(50% + " + dx.toFixed(2) + "px)";
+    pin.style.top =
+      "calc(50% - " + LOCATION_MAP_CROP / 2 + "px + " + dy.toFixed(2) + "px)";
+    pin.style.transform = "translate(-50%, -100%)";
+  }
+
+  function applyMapTransform() {
+    const frame = locationFrame();
+    const map = $("#locationMap");
+    const scale = Math.pow(2, locZoomLive - locZoom);
+    const zooming = Math.abs(scale - 1) > 0.004;
+    if (map) map.classList.toggle("is-zooming", zooming);
+    if (frame) {
+      const parts = [];
+      if (locPanX || locPanY) parts.push("translate(" + locPanX.toFixed(2) + "px, " + locPanY.toFixed(2) + "px)");
+      if (zooming) parts.push("scale(" + scale.toFixed(4) + ")");
+      frame.style.transform = parts.join(" ");
+    }
+    placeLocationPin();
+  }
+
+  function shiftLocationMap(dx, dy) {
+    locPanX = dx;
+    locPanY = dy;
+    applyMapTransform();
+  }
+
+  function settleLocationMap() {
+    locPanX = 0;
+    locPanY = 0;
+    const map = $("#locationMap");
+    if (map) map.classList.remove("is-panning");
+    applyMapTransform();
+  }
+
+  function cancelZoomMotion() {
+    if (locZoomTimer) {
+      clearTimeout(locZoomTimer);
+      locZoomTimer = 0;
+    }
+    if (locZoomAnim) {
+      cancelAnimationFrame(locZoomAnim);
+      locZoomAnim = 0;
+    }
+  }
+
+  function ensureZoomEase() {
+    if (locZoomTimer) {
+      clearTimeout(locZoomTimer);
+      locZoomTimer = 0;
+    }
+    if (locZoomAnim) return;
+    const step = () => {
+      if (locPinching || locDragging) {
+        locZoomAnim = 0;
+        return;
+      }
+      const diff = locZoomGoal - locZoomLive;
+      if (Math.abs(diff) < 0.01) {
+        locZoomLive = locZoomGoal;
+        applyMapTransform();
+        locZoomAnim = 0;
+        scheduleZoomCommit();
+        return;
+      }
+      locZoomLive += diff * 0.22;
+      applyMapTransform();
+      locZoomAnim = requestAnimationFrame(step);
+    };
+    locZoomAnim = requestAnimationFrame(step);
+  }
+
+  function scheduleZoomCommit() {
+    if (locZoomTimer) clearTimeout(locZoomTimer);
+    locZoomTimer = setTimeout(() => {
+      locZoomTimer = 0;
+      if (locPinching || locDragging) return;
+      const target = Math.max(2, Math.min(18, Math.round(locZoomLive)));
+      if (Math.abs(target - locZoomLive) >= 0.01) {
+        locZoomGoal = target;
+        ensureZoomEase();
+        return;
+      }
+      locZoomGoal = target;
+      locZoomLive = target;
+      if (target === locZoom) {
+        applyMapTransform();
+        return;
+      }
+      locZoom = target;
+      commitLocationMap();
+    }, 120);
+  }
+
+  function nudgeZoom(deltaLevels) {
+    locZoomGoal = Math.max(2, Math.min(18, locZoomGoal + deltaLevels));
+    ensureZoomEase();
+  }
+
+  function snapZoomLevel() {
+    cancelZoomMotion();
+    const target = Math.max(2, Math.min(18, Math.round(locZoomLive)));
+    locZoomGoal = target;
+    locZoomLive = target;
+    if (target === locZoom) {
+      applyMapTransform();
+      return;
+    }
+    locZoom = target;
+    commitLocationMap();
+  }
+
+  function commitLocationMap() {
+    const frame = locationFrame();
+    if (!frame) return;
+    const src = locationMapSrc(locView.lat, locView.lng, locZoom);
+    if (frame.getAttribute("data-src") === src) {
+      settleLocationMap();
+      return;
+    }
+    const gen = ++locMapGen;
+    const clearShift = () => {
+      if (gen !== locMapGen || locDragging) return;
+      settleLocationMap();
+    };
+    frame.onload = clearShift;
+    frame.setAttribute("data-src", src);
+    frame.src = src;
+    setTimeout(clearShift, 4000);
+  }
+
+  function showLocationMapNow() {
+    const frame = locationFrame();
+    if (!frame) return;
+    const src = locationMapSrc(locView.lat, locView.lng, locZoom);
+    frame.style.transform = "";
+    frame.onload = null;
+    frame.setAttribute("data-src", src);
+    frame.src = src;
+    paintLocationChrome();
+    placeLocationPin();
+  }
+
+  function placeLabelFromProps(props) {
+    const p = props || {};
+    const name = String(p.name || p.street || p.city || p.state || "").trim();
+    const parts = [p.housenumber ? String(p.street || "") + " " + p.housenumber : "", p.street, p.city, p.state, p.country];
+    const hint = parts
+      .map((part) => String(part || "").trim())
+      .filter((part, i, arr) => part && part !== name && arr.indexOf(part) === i)
+      .join(", ");
+    return [name, hint].filter(Boolean).join(", ");
+  }
+
+  function photonFeatures(json) {
+    return (json && json.features) || [];
+  }
+
+  function fillDescriptionFor(lat, lng) {
+    const desc = $("#locationDescription");
+    if (!desc || !locDescAuto) return;
+    const seq = ++locRevSeq;
+    const session = locSession;
+    const url =
+      "https://photon.komoot.io/reverse?lat=" +
+      encodeURIComponent(lat) +
+      "&lon=" +
+      encodeURIComponent(lng) +
+      "&lang=en";
+    fetch(url)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        if (seq !== locRevSeq || session !== locSession || !locDescAuto) return;
+        const feature = photonFeatures(json)[0];
+        const label = feature ? placeLabelFromProps(feature.properties) : "";
+        desc.value = label || lat.toFixed(5) + ", " + lng.toFixed(5);
+      })
+      .catch(() => {
+        if (seq !== locRevSeq || session !== locSession || !locDescAuto) return;
+        if (!desc.value.trim()) desc.value = lat.toFixed(5) + ", " + lng.toFixed(5);
+      });
+  }
+
+  function moveLocationPin(ll, zoom, address, keepView) {
+    locCenter = { lat: clampLocLat(ll.lat), lng: wrapLocLng(ll.lng) };
+    if (!keepView) {
+      locView = { lat: locCenter.lat, lng: locCenter.lng };
+      if (zoom) {
+        locZoom = Math.max(2, Math.min(18, zoom));
+        locZoomLive = locZoom;
+        locZoomGoal = locZoom;
+      }
+    }
+    locPicked = true;
+    const desc = $("#locationDescription");
+    if (address && locDescAuto && desc) {
+      locRevSeq++;
+      desc.value = address;
+    } else if (!address) {
+      fillDescriptionFor(locCenter.lat, locCenter.lng);
+    }
+    paintLocationChrome();
+    if (keepView) placeLocationPin();
+    else commitLocationMap();
+  }
+
+  function setLocationZoom(next) {
+    const z = Math.max(2, Math.min(18, Math.round(next)));
+    cancelZoomMotion();
+    locZoomGoal = z;
+    locZoomLive = z;
+    if (z === locZoom) {
+      applyMapTransform();
+      return;
+    }
+    locZoom = z;
+    commitLocationMap();
+  }
+
+  function closeLocationSuggestions() {
+    const box = $("#locationSuggestions");
+    const input = $("#locationSearch");
+    if (box) box.hidden = true;
+    if (input) input.setAttribute("aria-expanded", "false");
+    locSuggestActive = -1;
+  }
+
+  function paintLocationSuggestions(state) {
+    const box = $("#locationSuggestions");
+    const input = $("#locationSearch");
+    if (!box) return;
+    if (state === "closed") {
+      closeLocationSuggestions();
+      return;
+    }
+    box.hidden = false;
+    if (input) input.setAttribute("aria-expanded", "true");
+    if (state === "busy") {
+      box.innerHTML = '<div class="location-suggest-empty">Searching…</div>';
+      return;
+    }
+    if (!locSuggests.length) {
+      box.innerHTML = '<div class="location-suggest-empty">No matches found.</div>';
+      return;
+    }
+    if (locSuggestActive >= locSuggests.length) locSuggestActive = locSuggests.length - 1;
+    box.innerHTML = locSuggests
+      .map((s, i) => {
+        const hint = s.hint
+          ? '<small>' + HiveMd.escapeHtml(s.hint) + "</small>"
+          : "";
+        return (
+          '<button type="button" class="location-suggestion' +
+          (i === locSuggestActive ? " is-active" : "") +
+          '" role="option" data-loc-index="' +
+          i +
+          '" id="locationSuggest' +
+          i +
+          '">' +
+          HiveMd.escapeHtml(s.label) +
+          hint +
+          "</button>"
+        );
+      })
+      .join("");
+    if (input) {
+      input.setAttribute(
+        "aria-activedescendant",
+        locSuggestActive >= 0 ? "locationSuggest" + locSuggestActive : ""
+      );
+    }
+  }
+
+  function selectLocationSuggestion(index) {
+    const s = locSuggests[index];
+    if (!s) return;
+    const input = $("#locationSearch");
+    const address = [s.label, s.hint].filter(Boolean).join(", ");
+    if (input) input.value = address;
+    closeLocationSuggestions();
+    locZoom = Math.max(locZoom, 15);
+    moveLocationPin({ lat: s.lat, lng: s.lng }, locZoom, address);
+    setLocationStatus("");
+  }
+
+  function runLocationSearch(query) {
+    if (locSearchAbort) locSearchAbort.abort();
+    const q = String(query || "").trim();
+    if (q.length < 2) {
+      locSuggests = [];
+      closeLocationSuggestions();
+      return;
+    }
+    const ctrl = new AbortController();
+    locSearchAbort = ctrl;
+    const session = locSession;
+    paintLocationSuggestions("busy");
+    fetch(
+      "https://photon.komoot.io/api/?limit=6&lang=en&q=" + encodeURIComponent(q),
+      { signal: ctrl.signal }
+    )
+      .then((res) => {
+        if (!res.ok) throw new Error("search");
+        return res.json();
+      })
+      .then((json) => {
+        if (session !== locSession || ctrl.signal.aborted) return;
+        locSuggests = photonFeatures(json)
+          .map((f, i) => {
+            const coords = f.geometry && f.geometry.coordinates;
+            if (!coords || coords.length < 2) return null;
+            const lng = Number(coords[0]);
+            const lat = Number(coords[1]);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+            const p = f.properties || {};
+            const label = String(p.name || p.street || p.city || p.state || "").trim();
+            if (!label) return null;
+            const hint = [p.street, p.city, p.state, p.country]
+              .map((part) => String(part || "").trim())
+              .filter((part, idx, arr) => part && part !== label && arr.indexOf(part) === idx)
+              .join(", ");
+            return { id: String(p.osm_id || i), label, hint, lat, lng };
+          })
+          .filter(Boolean);
+        locSuggestActive = locSuggests.length ? 0 : -1;
+        paintLocationSuggestions(locSuggests.length ? "list" : "empty");
+      })
+      .catch((err) => {
+        if (err && err.name === "AbortError") return;
+        if (session !== locSession) return;
+        locSuggests = [];
+        paintLocationSuggestions("empty");
+      });
+  }
+
+  function scheduleLocationSearch() {
+    const input = $("#locationSearch");
+    const q = input ? input.value : "";
+    if (locSearchTimer) clearTimeout(locSearchTimer);
+    locSearchTimer = setTimeout(() => {
+      locSearchTimer = 0;
+      runLocationSearch(q);
+    }, 300);
+  }
+
+  function useDeviceLocation() {
+    if (!navigator.geolocation) {
+      setLocationStatus("This browser can't read the device location.", true);
+      return;
+    }
+    const btn = $("#locationLocate");
+    if (btn) btn.disabled = true;
+    setLocationStatus("Locating…");
+    const session = locSession;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        if (session !== locSession) return;
+        if (btn) btn.disabled = false;
+        setLocationStatus("");
+        const input = $("#locationSearch");
+        if (input) input.value = "";
+        closeLocationSuggestions();
+        locZoom = Math.max(locZoom, 15);
+        moveLocationPin(
+          { lat: pos.coords.latitude, lng: pos.coords.longitude },
+          locZoom
+        );
+      },
+      () => {
+        if (session !== locSession) return;
+        if (btn) btn.disabled = false;
+        setLocationStatus(
+          "Couldn't access your location. Check the browser's location permission and try again.",
+          true
+        );
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    );
+  }
+
+  function openLocationDialog() {
+    if (editingComment() || publishDiscardOpen()) return;
+    const ov = $("#locationOverlay");
+    const body = $("#publishBody");
+    if (!ov || !body) return;
+    const existing = parsePublishLocation(body.value);
+    locSession++;
+    locHadSaved = Boolean(existing);
+    locPicked = Boolean(existing);
+    locCenter = existing
+      ? { lat: existing.lat, lng: existing.lng }
+      : { lat: 20, lng: 0 };
+    locView = { lat: locCenter.lat, lng: locCenter.lng };
+    locZoom = existing ? 14 : 2;
+    locZoomLive = locZoom;
+    locZoomGoal = locZoom;
+    locPanX = 0;
+    locPanY = 0;
+    locPinching = false;
+    locPointers.clear();
+    cancelZoomMotion();
+    locDescAuto = !(existing && existing.description);
+    locSuggests = [];
+    locSuggestActive = -1;
+    const search = $("#locationSearch");
+    const desc = $("#locationDescription");
+    const locate = $("#locationLocate");
+    if (search) search.value = "";
+    if (desc) desc.value = existing ? existing.description : "";
+    if (locate) locate.disabled = false;
+    closeLocationSuggestions();
+    setLocationStatus("");
+    ov.hidden = false;
+    showLocationMapNow();
+    if (locPicked && locDescAuto) fillDescriptionFor(locCenter.lat, locCenter.lng);
+    if (!isMobileViewport() && search) search.focus();
+  }
+
+  function saveLocationFromDialog() {
+    if (!locPicked) return;
+    const body = $("#publishBody");
+    const desc = $("#locationDescription");
+    if (!body) return;
+    body.value = bodyWithLocation(body.value, {
+      lat: locCenter.lat,
+      lng: locCenter.lng,
+      description: desc ? desc.value : "",
+    });
+    savePublishDraft();
+    updatePublishPreview();
+    schedulePublishDraftSave();
+    closeLocationDialog();
+  }
+
+  function removeLocationFromPost() {
+    const body = $("#publishBody");
+    if (!body) return;
+    body.value = bodyWithLocation(body.value, null);
+    savePublishDraft();
+    updatePublishPreview();
+    schedulePublishDraftSave();
+    closeLocationDialog();
+  }
+
+  function bindLocationDialog() {
+    const ov = $("#locationOverlay");
+    if (!ov || ov.dataset.bound === "1") return;
+    ov.dataset.bound = "1";
+    ov.addEventListener("click", (e) => {
+      if (e.target === ov) {
+        const active = document.activeElement;
+        if (!active || !ov.contains(active)) {
+          e.preventDefault();
+          closeLocationDialog();
+        }
+        return;
+      }
+      if (e.target.closest("#locationCancel")) {
+        e.preventDefault();
+        closeLocationDialog();
+        return;
+      }
+      if (e.target.closest("#locationSave")) {
+        e.preventDefault();
+        saveLocationFromDialog();
+        return;
+      }
+      if (e.target.closest("#locationRemove")) {
+        e.preventDefault();
+        removeLocationFromPost();
+        return;
+      }
+      if (e.target.closest("#locationLocate")) {
+        e.preventDefault();
+        useDeviceLocation();
+        return;
+      }
+      if (e.target.closest("#locationZoomIn")) {
+        e.preventDefault();
+        setLocationZoom(locZoom + 1);
+        return;
+      }
+      if (e.target.closest("#locationZoomOut")) {
+        e.preventDefault();
+        setLocationZoom(locZoom - 1);
+      }
+    });
+    ov.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      const box = $("#locationSuggestions");
+      if (box && !box.hidden) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeLocationSuggestions();
+        return;
+      }
+      e.preventDefault();
+      closeLocationDialog();
+    });
+    const search = $("#locationSearch");
+    if (search) {
+      search.addEventListener("input", () => {
+        scheduleLocationSearch();
+      });
+      search.addEventListener("keydown", (e) => {
+        const box = $("#locationSuggestions");
+        const open = box && !box.hidden && locSuggests.length;
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          if (!open) {
+            scheduleLocationSearch();
+            return;
+          }
+          locSuggestActive = (locSuggestActive + 1) % locSuggests.length;
+          paintLocationSuggestions("list");
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          if (!open) return;
+          e.preventDefault();
+          locSuggestActive = (locSuggestActive - 1 + locSuggests.length) % locSuggests.length;
+          paintLocationSuggestions("list");
+          return;
+        }
+        if (e.key === "Enter") {
+          if (open && locSuggestActive >= 0) {
+            e.preventDefault();
+            e.stopPropagation();
+            selectLocationSuggestion(locSuggestActive);
+          }
+          return;
+        }
+        if (e.key === "Escape" && box && !box.hidden) {
+          e.preventDefault();
+          e.stopPropagation();
+          closeLocationSuggestions();
+        }
+      });
+    }
+    const suggestions = $("#locationSuggestions");
+    if (suggestions) {
+      suggestions.addEventListener("mousedown", (e) => {
+        const btn = e.target.closest("[data-loc-index]");
+        if (!btn) return;
+        e.preventDefault();
+        selectLocationSuggestion(Number(btn.getAttribute("data-loc-index")));
+      });
+    }
+    const desc = $("#locationDescription");
+    if (desc) {
+      desc.addEventListener("input", () => {
+        locDescAuto = !String(desc.value || "").trim();
+        locRevSeq++;
+      });
+    }
+    const hit = $("#locationMapHit");
+    if (hit) {
+      function pointerSpan() {
+        const pts = Array.from(locPointers.values());
+        if (pts.length < 2) return 0;
+        return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      }
+      function beginPinch() {
+        cancelZoomMotion();
+        locPinching = true;
+        locDragging = false;
+        locPanX = 0;
+        locPanY = 0;
+        const map = $("#locationMap");
+        if (map) map.classList.remove("is-panning");
+        locPinchDist = pointerSpan();
+        locPinchZoom = locZoomLive;
+      }
+      function updatePinch() {
+        const dist = pointerSpan();
+        if (locPinchDist < 10 || dist < 10) return;
+        const z = Math.max(2, Math.min(18, locPinchZoom + Math.log2(dist / locPinchDist)));
+        locZoomGoal = z;
+        locZoomLive = z;
+        applyMapTransform();
+      }
+      hit.addEventListener(
+        "wheel",
+        (e) => {
+          e.preventDefault();
+          if (locDragging || locPinching) return;
+          let dy = e.deltaY;
+          if (e.deltaMode === 1) dy *= 32;
+          else if (e.deltaMode === 2) dy *= 800;
+          nudgeZoom(-dy / 100);
+        },
+        { passive: false }
+      );
+      hit.addEventListener("pointerdown", (e) => {
+        if (e.pointerType === "mouse" && e.button !== 0) return;
+        try {
+          hit.setPointerCapture(e.pointerId);
+        } catch (err) {
+          /* synthetic pointers have nothing to capture */
+        }
+        locPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (locPointers.size >= 2) {
+          beginPinch();
+          return;
+        }
+        snapZoomLevel();
+        locDragging = true;
+        hit.dataset.dragX = String(e.clientX);
+        hit.dataset.dragY = String(e.clientY);
+        hit.dataset.dragMoved = "";
+      });
+      hit.addEventListener("pointermove", (e) => {
+        if (!locPointers.has(e.pointerId) && !locDragging) return;
+        if (locPointers.has(e.pointerId)) {
+          locPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        }
+        if (locPointers.size >= 2) {
+          if (!locPinching) beginPinch();
+          updatePinch();
+          return;
+        }
+        if (!locDragging || (e.pointerId && hit.hasPointerCapture && !hit.hasPointerCapture(e.pointerId) && e.isPrimary === false)) {
+          return;
+        }
+        const x0 = Number(hit.dataset.dragX);
+        const y0 = Number(hit.dataset.dragY);
+        const dx = e.clientX - x0;
+        const dy = e.clientY - y0;
+        if (Math.abs(dx) > 4 || Math.abs(dy) > 4) hit.dataset.dragMoved = "1";
+        const map = $("#locationMap");
+        if (map) map.classList.add("is-panning");
+        shiftLocationMap(dx, dy);
+      });
+      const endDrag = (e) => {
+        if (locPinching || locPointers.size >= 2) {
+          locDragging = false;
+          return;
+        }
+        if (!locDragging) return;
+        locDragging = false;
+        const x0 = Number(hit.dataset.dragX);
+        const y0 = Number(hit.dataset.dragY);
+        const dx = e.clientX - x0;
+        const dy = e.clientY - y0;
+        const moved = hit.dataset.dragMoved === "1";
+        if (!moved) {
+          locPanX = 0;
+          locPanY = 0;
+          const map = $("#locationMap");
+          if (map) map.classList.remove("is-panning");
+          applyMapTransform();
+          const rect = hit.getBoundingClientRect();
+          const ox = e.clientX - (rect.left + rect.width / 2);
+          const oy = e.clientY - (rect.top + rect.height / 2) + LOCATION_MAP_CROP / 2;
+          const next = pointAtPixel(locView.lat, locView.lng, locZoom, ox, oy);
+          moveLocationPin(next, 0, "", true);
+          return;
+        }
+        locView = pointAtPixel(locView.lat, locView.lng, locZoom, -dx, -dy);
+        commitLocationMap();
+      };
+      const endPointer = (e) => {
+        locPointers.delete(e.pointerId);
+        if (locPinching && locPointers.size < 2) {
+          locPinching = false;
+          locDragging = false;
+          scheduleZoomCommit();
+          return;
+        }
+        endDrag(e);
+      };
+      hit.addEventListener("pointerup", endPointer);
+      hit.addEventListener("pointercancel", endPointer);
+    }
   }
 
   function resetPublishForm() {
@@ -5137,6 +6063,7 @@ let FILTER_LOW_REP = 20;
   function hidePublishOverlay(opts) {
     stopPublishDraftAutosave();
     hidePublishDiscard();
+    hideLocationDialog();
     const persist = !opts || opts.persist !== false;
     if (persist && !publishEdit) persistPublishDraftNow();
     const ov = $("#publishOverlay");
@@ -5152,6 +6079,66 @@ let FILTER_LOW_REP = 20;
     }
   }
 
+  function replaceOffPublish() {
+    let back = lastNonPublishPath || "/";
+    if (parseRoute(back).name === "publish") back = "/";
+    navigate(appHref(back.startsWith("/") ? back : "/" + back), true);
+  }
+
+  // Pop until the address leaves /publish. The map iframe shares session
+  // history, and one back() often only restores the map. A parent popstate
+  // does not fire for that, so keep going until the page underneath is current.
+  function leavePublishEntry() {
+    const gen = ++publishLeaveGen;
+    let hops = 0;
+    const finish = () => {
+      if (gen !== publishLeaveGen) return;
+      publishLeaveGen = 0;
+      if (parseRoute().name === "publish") {
+        replaceOffPublish();
+        return;
+      }
+      route();
+    };
+    const step = () => {
+      if (gen !== publishLeaveGen) return;
+      if (parseRoute().name !== "publish") {
+        finish();
+        return;
+      }
+      if (hops >= 30 || (window.navigation && navigation.canGoBack === false)) {
+        finish();
+        return;
+      }
+      hops += 1;
+      const href = location.href;
+      let sawPop = false;
+      const onPop = () => {
+        if (sawPop) return;
+        sawPop = true;
+        window.removeEventListener("popstate", onPop);
+        if (gen !== publishLeaveGen) return;
+        step();
+      };
+      window.addEventListener("popstate", onPop);
+      history.back();
+      window.setTimeout(() => {
+        if (gen !== publishLeaveGen || sawPop) return;
+        if (location.href !== href) {
+          window.setTimeout(() => {
+            if (gen !== publishLeaveGen || sawPop) return;
+            window.removeEventListener("popstate", onPop);
+            step();
+          }, 120);
+          return;
+        }
+        window.removeEventListener("popstate", onPop);
+        step();
+      }, 160);
+    };
+    step();
+  }
+
   function closePublish(opts) {
     hidePublishOverlay(opts);
     if (parseRoute().name !== "publish") return;
@@ -5159,12 +6146,10 @@ let FILTER_LOW_REP = 20;
     // opened from the feed stays open, instead of replacing it with the feed.
     if (publishNavPushed) {
       publishNavPushed = false;
-      history.back();
+      leavePublishEntry();
       return;
     }
-    let back = lastNonPublishPath || "/";
-    if (parseRoute(back).name === "publish") back = "/";
-    navigate(appHref(back.startsWith("/") ? back : "/" + back), true);
+    replaceOffPublish();
   }
 
   function openPublishOverlay() {
@@ -5286,6 +6271,7 @@ let FILTER_LOW_REP = 20;
         jsonMetadata.community = publishDest.name;
       }
     }
+    if (!commentEdit) applyLocationMetadata(jsonMetadata, body);
 
     if (!editing) permlink = postPermlink(title);
     if (pageEl) pageEl.classList.add("is-pending");
@@ -6899,7 +7885,7 @@ let FILTER_LOW_REP = 20;
     if (!root) return;
     root.addEventListener("click", (e) => {
       const attachBtn = e.target.closest(".composer-attach");
-      if (!attachBtn || !root.contains(attachBtn)) return;
+      if (!attachBtn || attachBtn.id === "publishLocationBtn" || !root.contains(attachBtn)) return;
       e.preventDefault();
       const composer = attachBtn.closest(".comment-composer");
       const input = composer && composer.querySelector(".composer-file");
@@ -10759,7 +11745,7 @@ let FILTER_LOW_REP = 20;
         return;
       }
       const attachBtn = e.target.closest(".composer-attach");
-      if (attachBtn && inInteractiveSurface(attachBtn)) {
+      if (attachBtn && attachBtn.id !== "publishLocationBtn" && inInteractiveSurface(attachBtn)) {
         e.preventDefault();
         const composer = attachBtn.closest(".comment-composer");
         const input = composer && composer.querySelector(".composer-file");
@@ -10942,6 +11928,7 @@ let FILTER_LOW_REP = 20;
     const publishOverlay = $("#publishOverlay");
     if (publishOverlay) {
       bindComposerMedia(publishOverlay);
+      bindLocationDialog();
       publishOverlay.addEventListener("click", (e) => {
         if (e.target === publishOverlay) {
           const active = document.activeElement;
@@ -10953,6 +11940,11 @@ let FILTER_LOW_REP = 20;
         if (e.target.closest("#publishCancel")) {
           e.preventDefault();
           cancelPublish();
+          return;
+        }
+        if (e.target.closest("#publishLocationBtn")) {
+          e.preventDefault();
+          openLocationDialog();
           return;
         }
         if (e.target.closest("#publishSubmit")) {
@@ -10986,6 +11978,13 @@ let FILTER_LOW_REP = 20;
         }
       });
       publishOverlay.addEventListener("keydown", (e) => {
+        if (locationDialogOpen()) {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            closeLocationDialog();
+          }
+          return;
+        }
         if (e.target.id === "publishTagInput") {
           if (e.key === " " || e.key === "Enter" || e.key === "," || e.key === "Tab") {
             if (e.key !== "Tab" || e.target.value.trim()) e.preventDefault();
