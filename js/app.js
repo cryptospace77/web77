@@ -4946,6 +4946,8 @@ let FILTER_LOW_REP = 20;
   let maplibrePromise = null;
   const LOCATION_MIN_ZOOM = -2;
   const LOCATION_MAX_ZOOM = 18;
+  // Northern edge kept inside the empty world frame so Canada and Russia stay visible.
+  const LOCATION_WORLD_NORTH = 74;
   const LOCATION_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty";
   const MAPLIBRE_JS = "https://cdn.jsdelivr.net/npm/maplibre-gl@6.13.0/dist/maplibre-gl.mjs";
   const MAPLIBRE_CSS = "https://cdn.jsdelivr.net/npm/maplibre-gl@6.13.0/dist/maplibre-gl.css";
@@ -5259,6 +5261,24 @@ let FILTER_LOW_REP = 20;
     return Math.max(LOCATION_MIN_ZOOM, Math.min(LOCATION_MAX_ZOOM, zoom));
   }
 
+  // Shift an equator-centered world view north until LOCATION_WORLD_NORTH
+  // sits on the top edge. A tall frame already includes it and stays centered.
+  function locationWorldCamera(width, height) {
+    const zoom = width > 2 ? clampLocationZoom(Math.log2(width / 512)) : 0;
+    const worldPx = 512 * Math.pow(2, zoom);
+    let lat = 0;
+    if (height > 2 && worldPx > 2) {
+      const delta = (height / 2) * (Math.PI * 2) / worldPx;
+      const north = Math.log(Math.tan(Math.PI / 4 + (LOCATION_WORLD_NORTH * Math.PI) / 360));
+      if (delta < north) {
+        const y = north - delta;
+        lat = (Math.atan(Math.exp(y)) * 2 - Math.PI / 2) * (180 / Math.PI);
+        if (lat < 0) lat = 0;
+      }
+    }
+    return { lat: lat, lng: 0, zoom: zoom };
+  }
+
   function loadMapLibre() {
     if (locMapLibre) return Promise.resolve(locMapLibre);
     if (maplibrePromise) return maplibrePromise;
@@ -5325,11 +5345,12 @@ let FILTER_LOW_REP = 20;
   function frameLocationWorld() {
     if (!locMap) return;
     const canvas = locMap.getContainer();
-    const width = canvas ? canvas.clientWidth : 0;
-    // 512px is the world width at zoom 0, so this zoom shows the world once across.
-    const zoom = width > 2 ? Math.log2(width / 512) : 0;
-    locView = { lat: 0, lng: 0 };
-    locZoom = clampLocationZoom(zoom);
+    const camera = locationWorldCamera(
+      canvas ? canvas.clientWidth : 0,
+      canvas ? canvas.clientHeight : 0
+    );
+    locView = { lat: camera.lat, lng: 0 };
+    locZoom = camera.zoom;
     applyLocationCamera(false);
   }
 
@@ -5683,6 +5704,15 @@ let FILTER_LOW_REP = 20;
     closeLocationSuggestions();
     setLocationStatus("");
     ov.hidden = false;
+    if (!existing) {
+      const box = $("#locationMap");
+      const camera = locationWorldCamera(
+        box ? box.clientWidth : 0,
+        box ? box.clientHeight : 0
+      );
+      locView = { lat: camera.lat, lng: 0 };
+      locZoom = camera.zoom;
+    }
     paintLocationChrome();
     const session = locSession;
     showLocationMap(session);
