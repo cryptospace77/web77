@@ -5601,14 +5601,23 @@ let FILTER_LOW_REP = 20;
   function communityLabelHtml(post, className) {
     const cls = className || "community";
     const name = communityNameOf(post);
-    const title =
-      (post && (post.community_title || post.community || post.category)) || "";
+    const label = String(
+      (post && (post.community_title || post.community || post.category)) || ""
+    ).trim();
     if (name) {
-      const label = (post && post.community_title) || name;
-      return `<a class="${cls}" href="${HiveMd.escapeHtml(communityHref(name))}">${HiveMd.escapeHtml(label)}</a>`;
+      const text = (post && post.community_title) || name;
+      return `<a class="${cls}" href="${HiveMd.escapeHtml(communityHref(name))}">${HiveMd.escapeHtml(text)}</a>`;
     }
-    if (!title) return "";
-    return `<span class="${cls}">${HiveMd.escapeHtml(title)}</span>`;
+    // A root post's category is its first tag. Link it to /space/<tag>.
+    const tag =
+      normalizeRouteTag(post && post.category) ||
+      normalizeRouteTag(post && post.community) ||
+      normalizeRouteTag(label);
+    if (tag && !isCommunityName(tag)) {
+      return `<a class="${cls}" href="${HiveMd.escapeHtml(appHref("/space/" + tag))}">${HiveMd.escapeHtml(label || tag)}</a>`;
+    }
+    if (!label) return "";
+    return `<span class="${cls}">${HiveMd.escapeHtml(label)}</span>`;
   }
 
   function originalCacheKey(author, permlink) {
