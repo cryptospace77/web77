@@ -42,6 +42,7 @@ let FILTER_LOW_REP = 20;
   const PUBLISH_DRAFT_SAVE_MS = 2000;
   const LOGO_FAVORITES_SHOW = 10;
   const SUGGESTED_TAGS_SHOW = 24;
+  const PINNED_SUGGESTED_TAGS = ["bitcoin", "crypto"];
   const NOTIF_LIMIT = 100;
   const NOTIF_SCROLL_PX = 72;
   const NOTIF_POLL_MS = 60000;
@@ -2907,7 +2908,7 @@ let FILTER_LOW_REP = 20;
     return path === pathForProfile(user);
   }
 
-  function profileSubMobile() {
+  function isMobileViewport() {
     return window.matchMedia("(max-width: 720px)").matches;
   }
 
@@ -2916,7 +2917,7 @@ let FILTER_LOW_REP = 20;
   function syncAccountMenuBanner(mode) {
     if (mode === "keep") return;
     if (mode === "hide") {
-      if (profileSubMobile()) document.body.classList.add("is-account-sub");
+      if (isMobileViewport()) document.body.classList.add("is-account-sub");
       return;
     }
     document.body.classList.remove("is-account-sub");
@@ -2957,7 +2958,7 @@ let FILTER_LOW_REP = 20;
   }
 
   function settleAccountMenuSub() {
-    if (profileSubMobile()) {
+    if (isMobileViewport()) {
       scrollWindowInstant(0);
       return;
     }
@@ -5995,6 +5996,14 @@ let FILTER_LOW_REP = 20;
       .map(([t]) => t);
   }
 
+  function suggestedTags() {
+    const fav = new Set(readFavoriteTags());
+    const pinned = PINNED_SUGGESTED_TAGS.filter((t) => !fav.has(t));
+    const skip = new Set(pinned);
+    const fromFeed = tagsFromFeedItems(feedState.items).filter((t) => !skip.has(t));
+    return pinned.concat(fromFeed);
+  }
+
   function paintSuggestedTags(loading) {
     const list = $("#suggestTagsList");
     if (!list) return;
@@ -6002,7 +6011,7 @@ let FILTER_LOW_REP = 20;
       list.innerHTML = `<div class="loading-row tags-suggest-loading"><span class="btn-loader" aria-hidden="true"></span> Loading suggested tags…</div>`;
       return;
     }
-    const tags = tagsFromFeedItems(feedState.items);
+    const tags = suggestedTags();
     if (!tags.length) {
       const emptyFeed = !feedState.items.length;
       list.innerHTML = emptyFeed
@@ -6101,7 +6110,7 @@ let FILTER_LOW_REP = 20;
     const needFeed = !feedState.items.length;
     paintSuggestedTags(needFeed);
     const input = $("#favTagInput");
-    if (input) input.focus();
+    if (input && !isMobileViewport()) input.focus();
     if (!needFeed) return;
     try {
       await ensureSuggestionFeed();
@@ -6411,7 +6420,7 @@ let FILTER_LOW_REP = 20;
     `;
     paintFavoriteCommunities();
     const searchInput = $("#communitySearchInput");
-    if (searchInput) searchInput.focus();
+    if (searchInput && !isMobileViewport()) searchInput.focus();
     if (user) await loadSubscribedCommunities(gen);
   }
 
