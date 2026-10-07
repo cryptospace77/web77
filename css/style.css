@@ -2137,7 +2137,8 @@ a.community:hover {
 }
 
 .reblog-confirm,
-.reblog-cancel {
+.reblog-cancel,
+.reblog-list {
   appearance: none;
   flex-shrink: 0;
   padding: 0.28rem 0.6rem;
@@ -2149,6 +2150,7 @@ a.community:hover {
   text-transform: uppercase;
   cursor: pointer;
   line-height: 1.2;
+  white-space: nowrap;
   transition: filter 0.15s, background 0.15s, color 0.15s, opacity 0.15s;
 }
 
@@ -2172,20 +2174,27 @@ a.community:hover {
   box-shadow: none;
 }
 
-.reblog-cancel {
+.reblog-cancel,
+.reblog-list {
   border: 1px solid var(--border);
   background: transparent;
   color: var(--gray);
 }
 
-.reblog-cancel:hover {
+.reblog-list {
+  display: none;
+}
+
+.reblog-cancel:hover,
+.reblog-list:hover {
   color: var(--yellow);
   border-color: var(--yellow);
   text-shadow: var(--glow-yellow);
 }
 
 .reblog-confirm:focus-visible,
-.reblog-cancel:focus-visible {
+.reblog-cancel:focus-visible,
+.reblog-list:focus-visible {
   outline: 1px solid var(--yellow);
   outline-offset: 2px;
 }
@@ -4511,6 +4520,18 @@ body:has(#publishOverlay:not([hidden])) {
   .post-stats-bar > .reblog-wrap,
   .post-stats-bar > .payout {
     flex-shrink: 0;
+  }
+
+  .reblog-list {
+    display: inline-block;
+  }
+
+  .reblog-confirm-panel {
+    max-width: min(22rem, calc(100vw - 16px));
+  }
+
+  .reblog-confirm-actions {
+    flex-wrap: nowrap;
   }
 
   .card-thumb {

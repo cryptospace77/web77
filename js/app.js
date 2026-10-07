@@ -1886,6 +1886,13 @@ let FILTER_LOW_REP = 20;
     }
   }
 
+  function onReblogList(listBtn) {
+    const wrap = (openReblog && openReblog.wrap) || (listBtn && listBtn.closest(".reblog-wrap"));
+    const btn = (openReblog && openReblog.btn) || (wrap && wrap.querySelector(".reblog-btn"));
+    hideReblogConfirm();
+    if (btn && btn.isConnected) showReblogUsers(btn, true);
+  }
+
   function onReblogConfirm(confirmBtn) {
     const author =
       (openReblog && openReblog.author) ||
@@ -5710,7 +5717,7 @@ let FILTER_LOW_REP = 20;
       .join(" ");
     const pending = viewState.pending ? "disabled" : "";
     const label = viewState.mine ? "Undo reblog" : "Reblog";
-    return `<span class="reblog-wrap" data-reblog-author="${author}" data-reblog-permlink="${permlink}"><button type="button" class="${classes}" data-reblog-author="${author}" data-reblog-permlink="${permlink}" aria-pressed="${viewState.mine ? "true" : "false"}" aria-label="${label}" ${pending}>${reblogIconHtml()}<span class="reblog-n">${viewState.count}</span></button><span class="reblog-confirm-panel" hidden><p class="reblog-confirm-caption">Reblog this post?</p><p class="reblog-confirm-status" hidden></p><span class="reblog-confirm-actions"><button type="button" class="reblog-confirm" data-reblog-author="${author}" data-reblog-permlink="${permlink}">Reblog</button><button type="button" class="reblog-cancel">Cancel</button></span></span></span>`;
+    return `<span class="reblog-wrap" data-reblog-author="${author}" data-reblog-permlink="${permlink}"><button type="button" class="${classes}" data-reblog-author="${author}" data-reblog-permlink="${permlink}" aria-pressed="${viewState.mine ? "true" : "false"}" aria-label="${label}" ${pending}>${reblogIconHtml()}<span class="reblog-n">${viewState.count}</span></button><span class="reblog-confirm-panel" hidden><p class="reblog-confirm-caption">Reblog this post?</p><p class="reblog-confirm-status" hidden></p><span class="reblog-confirm-actions"><button type="button" class="reblog-confirm" data-reblog-author="${author}" data-reblog-permlink="${permlink}">Reblog</button><button type="button" class="reblog-cancel">Cancel</button><button type="button" class="reblog-list">List</button></span></span></span>`;
   }
 
   function shareLineHtml(post) {
@@ -10558,6 +10565,13 @@ let FILTER_LOW_REP = 20;
           e.preventDefault();
           e.stopPropagation();
           hideReblogConfirm();
+          return;
+        }
+        const reblogList = e.target.closest(".reblog-list");
+        if (reblogList) {
+          e.preventDefault();
+          e.stopPropagation();
+          onReblogList(reblogList);
           return;
         }
         if (e.target.closest(".reblog-confirm-panel")) {
