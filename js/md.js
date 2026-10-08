@@ -994,6 +994,34 @@
     );
   }
 
+  // Hive permlinks are 1–256 chars: a letter or digit, then letters, digits, or
+  // hyphens, ending on a letter or digit. A following hyphen or underscore is
+  // not a post. A period or comma stays outside the link.
+  function postPermlinkAt(s, index) {
+    if (s.charAt(index) !== "/") return "";
+    const m = /^[a-z0-9](?:[a-z0-9-]{0,254}[a-z0-9])?/i.exec(s.slice(index + 1));
+    if (!m) return "";
+    const perm = m[0];
+    const next = s.charAt(index + 1 + perm.length);
+    if (next && /[a-z0-9_-]/i.test(next)) return "";
+    return perm;
+  }
+
+  function postRefHtml(at, name, permlink) {
+    const user = String(name || "").toLowerCase();
+    const perm = String(permlink || "").toLowerCase();
+    return (
+      '<a class="mention" href="' +
+      escapeHtml(localAppPrefix() + "@" + user + "/" + perm) +
+      '">' +
+      at +
+      escapeHtml(name) +
+      "/" +
+      escapeHtml(permlink) +
+      "</a>"
+    );
+  }
+
   function tagHtml(hash, name) {
     const tag = String(name || "").toLowerCase();
     const community = /^hive-(\d+)$/.exec(tag);
@@ -1008,7 +1036,7 @@
     );
   }
 
-  /** Turn bare @username mentions and #tags into local links. Skip HTML tags and existing links. */
+  /** Turn bare @username and @username/permlink mentions, and #tags, into local links. */
   function linkifyMentionsTags(html) {
     const s = String(html || "");
     let out = "";
@@ -1042,6 +1070,12 @@
       if ((at === "@" || at === "＠") && isMentionBoundary(s[i - 1])) {
         const m = s.slice(i + 1).match(/^([a-z][a-z0-9.\-]*[a-z0-9])/i);
         if (m && m[1].length >= 3 && m[1].length <= 16) {
+          const perm = postPermlinkAt(s, i + 1 + m[1].length);
+          if (perm) {
+            out += postRefHtml(at, m[1], perm);
+            i += 1 + m[1].length + 1 + perm.length;
+            continue;
+          }
           out += mentionHtml(at, m[1]);
           i += 1 + m[1].length;
           continue;
