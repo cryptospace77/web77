@@ -2935,12 +2935,14 @@ a.tag:hover {
 
 .post-body .tweet-embed,
 .comment-body .tweet-embed {
-  margin: 1.75rem auto;
-  max-width: 550px;
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  margin: 1.35rem 0;
 }
 
 .comment-body .tweet-embed {
-  margin: 1rem auto;
+  margin: 1rem 0;
 }
 
 .post-body .tweet-embed blockquote.twitter-tweet,
@@ -2948,15 +2950,25 @@ a.tag:hover {
   border-left: none;
   font-style: normal;
   padding: 0;
-  margin: 0;
+  margin: 0 auto;
   color: inherit;
+}
+
+/* widgets.js replaces the blockquote with a 550px box and only sets vertical
+   margins, so a full-width column leaves the post stuck to the left edge. */
+.post-body .tweet-embed > .twitter-tweet,
+.comment-body .tweet-embed > .twitter-tweet,
+.post-body .tweet-embed > iframe,
+.comment-body .tweet-embed > iframe {
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .post-body .tweet-embed iframe,
 .comment-body .tweet-embed iframe {
   position: static;
   width: 100%;
-  max-width: 100%;
+  max-width: 550px;
   height: auto;
   border: 0;
   border-radius: 12px;

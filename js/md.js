@@ -251,57 +251,6 @@
     return s;
   }
 
-  // Bare 3Speak URLs become links so the embed step can see them. Fences and
-  // inline code stay literal. A URL that is already a markdown destination,
-  // including the [<img>](url) player placeholder and [0:30](url&t=30), stays.
-  function linkifyBareThreeSpeak(src) {
-    const s = String(src || "");
-    const re =
-      /(^|[\s(])(https?:\/\/(?:www\.)?(?:play\.)?3speak\.tv\/(?:watch|embed)\?v=[^)\s<]+)(?=$|[\s)<])/gim;
-    let out = "";
-    let i = 0;
-    let chunkStart = 0;
-    const fence = { inFence: false, fenceMark: "" };
-    function flush(to) {
-      if (to <= chunkStart) return;
-      out += s.slice(chunkStart, to).replace(re, function (full, pre, url, offset, str) {
-        if (pre === "(" && str.charAt(offset - 1) === "]") return full;
-        return pre + "[" + url + "](" + url + ")";
-      });
-      chunkStart = to;
-    }
-    while (i < s.length) {
-      const fenceEnd = skipFenceLine(s, i, fence);
-      if (fenceEnd >= 0) {
-        flush(i);
-        out += s.slice(i, fenceEnd);
-        i = fenceEnd;
-        chunkStart = i;
-        continue;
-      }
-      if (fence.inFence) {
-        flush(i);
-        out += s.charAt(i);
-        i++;
-        chunkStart = i;
-        continue;
-      }
-      if (s.charAt(i) === "`") {
-        const span = readCodeSpan(s, i);
-        if (span) {
-          flush(i);
-          out += span.raw;
-          i = span.end;
-          chunkStart = i;
-          continue;
-        }
-      }
-      i++;
-    }
-    flush(s.length);
-    return out;
-  }
-
   function preprocessHiveMarkdown(src) {
     let s = String(src || "").replace(/\r\n/g, "\n");
     s = replaceWorldmappinSnippets(s);
@@ -318,20 +267,11 @@
       /^(https?:\/\/(?:(?:i|images)\.ecency\.com|(?:i|img|images|cdn|files|media)\.inleo\.io)\/[^\s]+)\s*$/gim,
       "![]($1)"
     );
-    // ![alt](url "title") → <img> so HTML blocks cannot swallow it
+    // ![alt](url "title") → <img> so HTML blocks cannot swallow it.
+    // Bare media URLs stay plain text. embedMedia turns those into players,
+    // and the last step links whatever URL text is left. A markdown link
+    // such as [source](url) is not wrapped again.
     s = replaceMarkdownImages(s);
-    // Bare YouTube URLs in markdown (never inside HTML) → links so marked turns them into <a>.
-    // Query/hash only after the id; do not consume "<" or the rest of a table row.
-    s = s.replace(
-      /(^|[\s(])(https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?[^)\s<]*v=[\w-]+|embed\/[\w-]+|shorts\/[\w-]+|live\/[\w-]+)(?:[?#][^)\s<]*)?|youtu\.be\/[\w-]+(?:[?#][^)\s<]*)?))(?=$|[\s)<])/gim,
-      "$1[$2]($2)"
-    );
-    s = linkifyBareThreeSpeak(s);
-    // Bare X / Twitter status URLs in markdown → links (profiles are left alone)
-    s = s.replace(
-      /(^|[\s(])(https?:\/\/(?:www\.|mobile\.)?(?:twitter|x)\.com\/(?:i\/web|[A-Za-z0-9_]+)\/status(?:es)?\/\d+(?:\/(?:photo|video)\/\d+)?(?:[?#][^)\s<]*)?)(?=$|[\s)<])/gim,
-      "$1[$2]($2)"
-    );
     return s;
   }
 
@@ -383,30 +323,12 @@
     );
   }
 
-  // Image placeholders, including 3Speak's empty <img>, and a link whose text
-  // is the video URL become a player. [0:30](…&t=30) stays a timestamp link.
-  function isThreeSpeakPlayerAnchor(full) {
-    const m = /^<a\b[^>]*>([\s\S]*)<\/a>$/i.exec(full);
-    if (!m) return false;
-    const text = unescapeHtml(
-      m[1]
-        .replace(/<img\b[^>]*>/gi, "")
-        .replace(/<br\s*\/?>/gi, "")
-        .replace(/<[^>]+>/g, "")
-    )
-      .replace(/&nbsp;|&#160;|&#xa0;/gi, " ")
-      .replace(/\u00a0/g, " ")
-      .trim();
-    if (!text) return true;
-    return !!threeSpeakFromUrl(text);
-  }
-
   function tweetEmbedHtml(id) {
     if (!/^\d{1,22}$/.test(id)) return "";
     const href = "https://x.com/i/status/" + id;
     return (
       '<div class="tweet-embed">' +
-      '<blockquote class="twitter-tweet" data-theme="dark">' +
+      '<blockquote class="twitter-tweet" data-theme="dark" data-align="center">' +
       '<a href="' +
       href +
       '">View on X</a>' +
@@ -682,9 +604,8 @@
   }
 
   function leftoverMarkdownLinkHtml(text, href, title) {
-    if (isImageUrl(href) && (!String(text).trim() || String(text).trim() === href)) {
-      return imageHtml(href, "") || escapeHtml(text);
-    }
+    // A markdown link stays a link, including when the href is an image or a
+    // media URL. Own-line plain image URLs are already markdown images.
     return linkHtml(href, text, title);
   }
 
@@ -814,14 +735,6 @@
     return out;
   }
 
-  function embedFromHref(href) {
-    const id = youtubeIdFromUrl(href);
-    if (id) return youtubeEmbedHtml(id);
-    const tweetId = tweetIdFromUrl(href);
-    if (tweetId) return tweetEmbedHtml(tweetId);
-    return "";
-  }
-
   function embedWorldmappin(html) {
     const re = new RegExp("(?:<p>\\s*)?" + WORLDMAPPIN_INNER + "(?:\\s*</p>)?", "gi");
     return String(html || "").replace(re, function (_full, lat, lng, desc) {
@@ -830,86 +743,158 @@
     });
   }
 
-  function embedImages(html) {
-    // Bare image URLs left in text (e.g. <center>https://i.ecency.com/…</center>).
-    // Skip quoted attributes and markdown/HTML destinations: ](url) href="url".
-    html = String(html || "").replace(
-      /(^|[\s>])(https?:\/\/[^\s<)"']+)/gi,
-      function (full, pre, raw) {
-        const trimmed = raw.replace(/[.,;:!?]+$/, "");
-        if (!isImageUrl(trimmed)) return full;
-        const trail = raw.slice(trimmed.length);
-        return pre + imageHtml(trimmed, "") + trail;
+  // Walk rendered HTML text. Tags are copied through. The inside of a link or
+  // a raw block is copied through too, so a URL that is already a link, or
+  // that sits in code, is neither embedded nor linkified.
+  function walkHtmlText(html, onText) {
+    const s = String(html || "");
+    let out = "";
+    let i = 0;
+    while (i < s.length) {
+      if (s.charAt(i) === "<") {
+        const skipTag = /^<(a|code|pre|script|style|textarea|kbd|samp)\b/i.exec(s.slice(i));
+        if (skipTag) {
+          const close = new RegExp("</" + skipTag[1] + "\\s*>", "i");
+          const rest = s.slice(i);
+          const found = rest.search(close);
+          if (found < 0) {
+            out += rest;
+            break;
+          }
+          const end = found + rest.slice(found).match(close)[0].length;
+          out += rest.slice(0, end);
+          i += end;
+          continue;
+        }
+        const gt = s.indexOf(">", i + 1);
+        if (gt < 0) {
+          out += s.slice(i);
+          break;
+        }
+        out += s.slice(i, gt + 1);
+        i = gt + 1;
+        continue;
       }
-    );
-
-    return html;
+      const next = s.indexOf("<", i);
+      const end = next < 0 ? s.length : next;
+      out += onText(s.slice(i, end));
+      i = end;
+    }
+    return out;
   }
 
-  // Code, pre, and other raw blocks keep their text. A 3Speak URL in a fence
-  // must not become a player after markdown has wrapped it in <code>.
-  function replaceOutsideRawHtml(html, re, fn) {
-    const raw = /<(pre|code|script|style|textarea|kbd|samp)\b[^>]*>[\s\S]*?<\/\1>/gi;
-    const src = String(html || "");
-    let out = "";
-    let last = 0;
-    let m;
-    while ((m = raw.exec(src))) {
-      out += src.slice(last, m.index).replace(re, fn);
-      out += m[0];
-      last = m.index + m[0].length;
+  // Trailing sentence punctuation stays outside the URL. A closing paren is
+  // kept when the URL itself opened it.
+  function splitPlainUrl(raw) {
+    let url = String(raw || "");
+    let trail = "";
+    while (url.length) {
+      const ch = url.charAt(url.length - 1);
+      if (/[.,;:!?]/.test(ch)) {
+        trail = ch + trail;
+        url = url.slice(0, -1);
+        continue;
+      }
+      if (ch === ")") {
+        let open = 0;
+        let close = 0;
+        for (let k = 0; k < url.length; k++) {
+          if (url.charAt(k) === "(") open++;
+          else if (url.charAt(k) === ")") close++;
+        }
+        if (close > open) {
+          trail = ch + trail;
+          url = url.slice(0, -1);
+          continue;
+        }
+      }
+      break;
     }
-    out += src.slice(last).replace(re, fn);
-    return out;
+    return { url: url, trail: trail };
+  }
+
+  function embedPlainText(text) {
+    return String(text || "").replace(/https?:\/\/[^\s<]+/gi, function (raw) {
+      const parts = splitPlainUrl(raw);
+      if (!parts.url) return raw;
+      const url = unescapeHtml(parts.url);
+      const yt = youtubeIdFromUrl(url);
+      if (yt) {
+        const embed = youtubeEmbedHtml(yt);
+        if (embed) return embed + parts.trail;
+      }
+      const speak = threeSpeakFromUrl(url);
+      if (speak) {
+        const embed = threeSpeakEmbedHtml(speak.id, speak.route);
+        if (embed) return embed + parts.trail;
+      }
+      const tweet = tweetIdFromUrl(url);
+      if (tweet) {
+        const embed = tweetEmbedHtml(tweet);
+        if (embed) return embed + parts.trail;
+      }
+      if (isImageUrl(url)) {
+        const img = imageHtml(url, "");
+        if (img) return img + parts.trail;
+      }
+      return raw;
+    });
+  }
+
+  // A block player inside <p> is invalid. Split the paragraph so the player
+  // is a sibling and the surrounding text stays in the post body.
+  function liftBlockEmbeds(html) {
+    return String(html || "").replace(/<p\b([^>]*)>([\s\S]*?)<\/p>/gi, function (full, attrs, inner) {
+      if (!/<div class="(?:tweet-embed|embed)\b/.test(inner)) return full;
+      const re = /<div class="(?:tweet-embed|embed)\b[^>]*>[\s\S]*?<\/div>/gi;
+      const pieces = [];
+      let last = 0;
+      let found = false;
+      let m;
+      let firstText = true;
+      while ((m = re.exec(inner))) {
+        found = true;
+        const before = inner.slice(last, m.index).replace(/^\s+|\s+$/g, "");
+        if (before) {
+          pieces.push(firstText ? "<p" + attrs + ">" + before + "</p>" : "<p>" + before + "</p>");
+          firstText = false;
+        }
+        pieces.push(m[0]);
+        last = m.index + m[0].length;
+      }
+      if (!found) return full;
+      const after = inner.slice(last).replace(/^\s+|\s+$/g, "");
+      if (after) {
+        pieces.push(firstText ? "<p" + attrs + ">" + after + "</p>" : "<p>" + after + "</p>");
+      }
+      return pieces.join("");
+    });
   }
 
   function embedMedia(html) {
     html = embedWorldmappin(html);
-    html = embedImages(html);
-
-    // Linked YouTube / 3Speak / X URLs → our player. The href was already
-    // checked by the whitelist. A 3Speak timestamp citation stays a link.
-    html = html.replace(/<a\s+[^>]*href="([^"]+)"[^>]*>[\s\S]*?<\/a>/gi, (full, href) => {
-      const decoded = unescapeHtml(href);
-      const speak = threeSpeakFromUrl(decoded);
-      if (speak) {
-        if (!isThreeSpeakPlayerAnchor(full)) return full;
-        return threeSpeakEmbedHtml(speak.id, speak.route) || full;
-      }
-      return embedFromHref(decoded) || full;
-    });
-
-    // Bare YouTube URLs in HTML text (e.g. <th>https://youtube.com/shorts/…</th>).
-    // Skip quoted attributes so iframe src= is not rewritten.
-    html = html.replace(
-      /(^|[^"'=])(https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?(?:[^<\s]*&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([\w-]{11})[^<\s]*)/gi,
-      (full, pre, _url, id) => {
-        const embed = youtubeEmbedHtml(id);
-        return embed ? pre + embed : full;
-      }
-    );
-
-    html = replaceOutsideRawHtml(
-      html,
-      /(^|[^"'=])(https?:\/\/(?:www\.)?(?:play\.)?3speak\.tv\/(?:watch|embed)\?[^\s<)"']+)/gi,
-      (full, pre, raw) => {
-        const trimmed = raw.replace(/[.,;:!?]+$/, "");
-        const info = threeSpeakFromUrl(trimmed);
-        if (!info) return full;
-        const embed = threeSpeakEmbedHtml(info.id, info.route);
-        return embed ? pre + embed + raw.slice(trimmed.length) : full;
-      }
-    );
-
-    html = html.replace(
-      /(^|[^"'=])(https?:\/\/(?:www\.|mobile\.)?(?:twitter|x)\.com\/(?:i\/web|[A-Za-z0-9_]+)\/status(?:es)?\/(\d+)[^<\s]*)/gi,
-      (full, pre, _url, id) => {
-        const embed = tweetEmbedHtml(id);
-        return embed ? pre + embed : full;
-      }
-    );
-
+    // Only text nodes. Markdown links and raw HTML links are already <a>,
+    // and this walk does not read their contents.
+    html = walkHtmlText(html, embedPlainText);
+    html = liftBlockEmbeds(html);
     return html;
+  }
+
+  function linkifyPlainText(text) {
+    return String(text || "").replace(/https?:\/\/[^\s<]+/gi, function (raw) {
+      const parts = splitPlainUrl(raw);
+      if (!parts.url) return raw;
+      const url = unescapeHtml(parts.url);
+      const linked = linkHtml(url, url);
+      if (!linked || linked === escapeHtml(url)) return raw;
+      return linked + parts.trail;
+    });
+  }
+
+  // Last URL step. Media text was embedded above. Angle-bracket autolinks and
+  // markdown links are already anchors. Hive hosts are rewritten next.
+  function linkifyPlainUrls(html) {
+    return walkHtmlText(html, linkifyPlainText);
   }
 
   function localAppPrefix() {
@@ -1257,9 +1242,8 @@
   function looksLikeMarkdown(s) {
     const text = markdownSignalText(s);
     if (/[*_~`\[!]/.test(text)) return true;
-    // A bare URL is an autolink. Inside <sup> and other styling tags, marked
-    // would otherwise leave it as text.
-    if (/https?:\/\//i.test(text)) return true;
+    // Angle-bracket autolinks. A bare https:// URL stays text here so the
+    // embed step can see it; linkifyPlainUrls links what remains.
     if (/<[A-Za-z][A-Za-z0-9+.-]*:/.test(text)) return true;
     if (/^#{1,6}(?:\s|$)/m.test(text)) return true;
     if (/^[ \t]{0,3}(?:>|[-+*](?:\s|$)|\d+\.\s)/m.test(text)) return true;
@@ -1432,8 +1416,20 @@
 
   function ensureMarked() {
     if (markedReady || !global.marked) return;
+    // GFM's bare-URL tokenizer is off. A pasted URL stays text until after
+    // embedMedia. Angle-bracket autolinks (<https://…>) still become links.
+    // undefined disables the tokenizer; false falls through and still autolinks.
+    const opts = {
+      gfm: true,
+      breaks: true,
+      tokenizer: {
+        url: function () {
+          return;
+        },
+      },
+    };
     if (typeof global.marked.use === "function") {
-      global.marked.use({ gfm: true, breaks: true });
+      global.marked.use(opts);
     } else if (typeof global.marked.setOptions === "function") {
       global.marked.setOptions({ gfm: true, breaks: true });
     }
@@ -1894,11 +1890,13 @@
     }
 
     // Leftover markdown inside HTML blocks becomes tags, then the whitelist
-    // sees the whole post. Embeds, mentions, and tags are added after that.
+    // sees the whole post. Plain-text media is embedded next. Remaining
+    // http(s) text is linked after that, then Hive hosts, mentions, and tags.
     html = replaceMarkdownImages(html);
     html = replaceMarkdownLinks(html);
     html = sanitizePostHtml(html);
     html = embedMedia(html);
+    html = linkifyPlainUrls(html);
     html = localizeHiveLinks(html);
     html = linkifyMentionsTags(html);
     html = wrapWideTables(html);
