@@ -406,7 +406,7 @@ html.has-mouse .logo-wrap:hover .app-logo,
   height: 0.78125em;
   width: auto;
   aspect-ratio: 1407 / 853;
-  margin-left: 0.75rem;
+  margin-left: 1.25rem;
   vertical-align: baseline;
   color: var(--red-bright);
   overflow: visible;
