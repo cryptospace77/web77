@@ -3025,8 +3025,28 @@ a.tag:hover {
 
 .comment-body p,
 .comment-body ul,
-.comment-body ol {
+.comment-body ol,
+.comment-body h1,
+.comment-body h2,
+.comment-body h3,
+.comment-body h4,
+.comment-body h5,
+.comment-body h6 {
   margin-bottom: 0.85rem;
+}
+
+/* A markdown heading in a comment is body copy. Title styles stay on the post. */
+.comment-body h1,
+.comment-body h2,
+.comment-body h3,
+.comment-body h4,
+.comment-body h5,
+.comment-body h6 {
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  text-transform: none;
+  text-shadow: none;
 }
 
 .comment-body ul,
