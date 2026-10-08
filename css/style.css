@@ -25,7 +25,7 @@
   --glow-red: 0 0 20px rgba(227, 19, 55, 0.45);
   --glow-yellow: 0 0 16px rgba(255, 225, 74, 0.35);
   --font-display: "Orbitron", system-ui, sans-serif;
-  --font-script: "Great Vibes", cursive;
+  --font-script: "Brush Script MT", cursive;
   --font-serif: "Instrument Serif", "Iowan Old Style", Palatino, Georgia, serif;
   --font-body: "Newsreader", "Iowan Old Style", Palatino, Georgia, serif;
   --font-mono: "Share Tech Mono", ui-monospace, monospace;
@@ -124,6 +124,11 @@ a:hover {
    pointer-events: none;
    opacity: 0.4;
    border-radius: inherit;
+}
+
+/* The 77 glow is a filter, which paints above this overlay. Keep the lines on top of it. */
+.logo-wrap::before {
+  z-index: 1;
 }
 
 .app {
@@ -337,10 +342,10 @@ html.has-mouse .logo-wrap:hover .brand h1,
 html.has-mouse .logo-wrap:hover .brand-77,
 .logo-wrap.is-open .brand-77,
 #logoBrand:active .brand-77 {
-  text-shadow:
-    0 0 8px #ff2a4d,
-    0 0 20px rgba(255, 42, 77, 0.95),
-    0 0 40px rgba(227, 19, 55, 0.55);
+  filter:
+    drop-shadow(0 0 8px #ff2a4d)
+    drop-shadow(0 0 20px rgba(255, 42, 77, 0.95))
+    drop-shadow(0 0 40px rgba(227, 19, 55, 0.55));
 }
 
 html.has-mouse .logo-wrap:hover .app-logo,
@@ -387,21 +392,26 @@ html.has-mouse .logo-wrap:hover .app-logo,
   letter-spacing: 0.08em;
   color: var(--yellow);
   text-shadow: var(--glow-yellow);
-  line-height: 1.1;
+  line-height: 1.2;
   margin: 0;
   transition: color 0.25s ease, text-shadow 0.25s ease;
 }
 
+.brand-keep {
+  white-space: nowrap;
+}
+
 .brand-77 {
-  font-family: var(--font-script);
-  font-weight: 400;
-  font-style: normal;
-  font-size: 1.35em;
-  letter-spacing: 0.02em;
+  display: inline-block;
+  height: 0.78125em;
+  width: auto;
+  aspect-ratio: 1407 / 853;
   margin-left: 1rem;
+  vertical-align: baseline;
   color: var(--red-bright);
-  text-shadow: 0 0 12px rgba(255, 42, 77, 0.45);
-  transition: text-shadow 0.25s ease;
+  overflow: visible;
+  filter: drop-shadow(0 0 12px rgba(255, 42, 77, 0.45));
+  transition: filter 0.25s ease;
 }
 
 .header-right {
