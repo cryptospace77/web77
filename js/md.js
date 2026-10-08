@@ -107,7 +107,7 @@
     if (!url) return "";
     const s = String(url);
     const m = s.match(
-      /(?:youtube\.com\/(?:watch\?(?:[^#]*&)?v=|embed\/|shorts\/|live\/|v\/)|youtu\.be\/|youtube\.com\/.*?[?&]v=)([\w-]{11})/i
+      /(?:youtube(?:-nocookie)?\.com\/(?:watch\?(?:[^#]*&)?v=|embed\/|shorts\/|live\/|v\/)|youtu\.be\/|youtube(?:-nocookie)?\.com\/.*?[?&]v=)([\w-]{11})/i
     );
     return m ? m[1] : "";
   }
@@ -236,29 +236,76 @@
     );
   }
 
+  function worldmappinLine(lat, lng, desc) {
+    return "!worldmappin " + lat + " lat " + lng + " long " + (desc || "") + " d3scr";
+  }
+
+  // Comments and reference definitions would not survive markdown and the
+  // whitelist. A plain line does, and the embed step turns it into the map.
   function replaceWorldmappinSnippets(s) {
-    const replaceInner = function (_full, lat, lng, desc) {
-      const html = worldmappinEmbedHtml(lat, lng, desc);
-      return html ? "\n\n" + html + "\n\n" : "";
+    const toLine = function (_full, lat, lng, desc) {
+      return "\n\n" + worldmappinLine(lat, lng, desc) + "\n\n";
     };
-    s = s.replace(new RegExp("\\[\\/\\/\\]:\\s*#\\s*\\(" + WORLDMAPPIN_INNER + "\\)", "gi"), replaceInner);
-    s = s.replace(new RegExp("<!--\\s*" + WORLDMAPPIN_INNER + "\\s*-->", "gi"), replaceInner);
-    s = s.replace(new RegExp("(^|\\n)[ \\t]*" + WORLDMAPPIN_INNER + "[ \\t]*(?=\\n|$)", "gi"), function (
-      _full,
-      pre,
-      lat,
-      lng,
-      desc
-    ) {
-      const html = worldmappinEmbedHtml(lat, lng, desc);
-      return html ? pre + "\n\n" + html + "\n\n" : pre;
-    });
+    s = s.replace(new RegExp("\\[\\/\\/\\]:\\s*#\\s*\\(" + WORLDMAPPIN_INNER + "\\)", "gi"), toLine);
+    s = s.replace(new RegExp("<!--\\s*" + WORLDMAPPIN_INNER + "\\s*-->", "gi"), toLine);
     return s;
+  }
+
+  // Bare 3Speak URLs become links so the embed step can see them. Fences and
+  // inline code stay literal. A URL that is already a markdown destination,
+  // including the [<img>](url) player placeholder and [0:30](url&t=30), stays.
+  function linkifyBareThreeSpeak(src) {
+    const s = String(src || "");
+    const re =
+      /(^|[\s(])(https?:\/\/(?:www\.)?(?:play\.)?3speak\.tv\/(?:watch|embed)\?v=[^)\s<]+)(?=$|[\s)<])/gim;
+    let out = "";
+    let i = 0;
+    let chunkStart = 0;
+    const fence = { inFence: false, fenceMark: "" };
+    function flush(to) {
+      if (to <= chunkStart) return;
+      out += s.slice(chunkStart, to).replace(re, function (full, pre, url, offset, str) {
+        if (pre === "(" && str.charAt(offset - 1) === "]") return full;
+        return pre + "[" + url + "](" + url + ")";
+      });
+      chunkStart = to;
+    }
+    while (i < s.length) {
+      const fenceEnd = skipFenceLine(s, i, fence);
+      if (fenceEnd >= 0) {
+        flush(i);
+        out += s.slice(i, fenceEnd);
+        i = fenceEnd;
+        chunkStart = i;
+        continue;
+      }
+      if (fence.inFence) {
+        flush(i);
+        out += s.charAt(i);
+        i++;
+        chunkStart = i;
+        continue;
+      }
+      if (s.charAt(i) === "`") {
+        const span = readCodeSpan(s, i);
+        if (span) {
+          flush(i);
+          out += span.raw;
+          i = span.end;
+          chunkStart = i;
+          continue;
+        }
+      }
+      i++;
+    }
+    flush(s.length);
+    return out;
   }
 
   function preprocessHiveMarkdown(src) {
     let s = String(src || "").replace(/\r\n/g, "\n");
     s = replaceWorldmappinSnippets(s);
+    s = rewriteKnownMediaPlayers(s);
     s = promoteThematicBreaks(s);
     s = promoteAtxHeadings(s);
     // Bare image URLs on their own line → markdown image
@@ -279,11 +326,7 @@
       /(^|[\s(])(https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?[^)\s<]*v=[\w-]+|embed\/[\w-]+|shorts\/[\w-]+|live\/[\w-]+)(?:[?#][^)\s<]*)?|youtu\.be\/[\w-]+(?:[?#][^)\s<]*)?))(?=$|[\s)<])/gim,
       "$1[$2]($2)"
     );
-    // Bare 3Speak URLs in markdown → links
-    s = s.replace(
-      /(^|[\s(])(https?:\/\/(?:www\.)?3speak\.tv\/watch\?v=[^)\s<]+)(?=$|[\s)<])/gim,
-      "$1[$2]($2)"
-    );
+    s = linkifyBareThreeSpeak(s);
     // Bare X / Twitter status URLs in markdown → links (profiles are left alone)
     s = s.replace(
       /(^|[\s(])(https?:\/\/(?:www\.|mobile\.)?(?:twitter|x)\.com\/(?:i\/web|[A-Za-z0-9_]+)\/status(?:es)?\/\d+(?:\/(?:photo|video)\/\d+)?(?:[?#][^)\s<]*)?)(?=$|[\s)<])/gim,
@@ -293,6 +336,7 @@
   }
 
   function youtubeEmbedHtml(id) {
+    if (!/^[\w-]{11}$/.test(id)) return "";
     return (
       '<div class="embed">' +
       '<iframe src="https://www.youtube.com/embed/' +
@@ -302,17 +346,63 @@
     );
   }
 
-  function threeSpeakEmbedHtml(id) {
+  // watch stays on /watch (legacy videos). embed stays on /embed (direct uploads).
+  // Both play from play.3speak.tv; the old 3speak.tv iframe host does not.
+  function threeSpeakFromUrl(href) {
+    const raw = unescapeHtml(String(href || "")).trim();
+    if (!raw) return null;
+    let url;
+    try {
+      url = new URL(raw);
+    } catch (err) {
+      return null;
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    const host = url.hostname.replace(/^www\./i, "").toLowerCase();
+    if (host !== "3speak.tv" && host !== "play.3speak.tv") return null;
+    let path = url.pathname.toLowerCase();
+    if (path.length > 1 && path.charAt(path.length - 1) === "/") path = path.slice(0, -1);
+    if (path !== "/watch" && path !== "/embed") return null;
+    const id = url.searchParams.get("v") || "";
+    if (!/^[\w./-]{1,160}$/.test(id) || id.indexOf("..") !== -1) return null;
+    return { id: id, route: path.slice(1) };
+  }
+
+  function threeSpeakEmbedHtml(id, route) {
+    const safe = String(id || "");
+    if (!/^[\w./-]{1,160}$/.test(safe) || safe.indexOf("..") !== -1) return "";
+    const kind = route === "watch" ? "watch" : "embed";
     return (
       '<div class="embed">' +
-      '<iframe src="https://3speak.tv/embed?v=' +
-      id +
-      '" allowfullscreen loading="lazy" title="3Speak"></iframe>' +
+      '<iframe src="https://play.3speak.tv/' +
+      kind +
+      "?v=" +
+      safe +
+      '&mode=iframe" allowfullscreen loading="lazy" title="3Speak"></iframe>' +
       "</div>"
     );
   }
 
+  // Image placeholders, including 3Speak's empty <img>, and a link whose text
+  // is the video URL become a player. [0:30](…&t=30) stays a timestamp link.
+  function isThreeSpeakPlayerAnchor(full) {
+    const m = /^<a\b[^>]*>([\s\S]*)<\/a>$/i.exec(full);
+    if (!m) return false;
+    const text = unescapeHtml(
+      m[1]
+        .replace(/<img\b[^>]*>/gi, "")
+        .replace(/<br\s*\/?>/gi, "")
+        .replace(/<[^>]+>/g, "")
+    )
+      .replace(/&nbsp;|&#160;|&#xa0;/gi, " ")
+      .replace(/\u00a0/g, " ")
+      .trim();
+    if (!text) return true;
+    return !!threeSpeakFromUrl(text);
+  }
+
   function tweetEmbedHtml(id) {
+    if (!/^\d{1,22}$/.test(id)) return "";
     const href = "https://x.com/i/status/" + id;
     return (
       '<div class="tweet-embed">' +
@@ -532,6 +622,7 @@
   }
 
   function imageHtml(url, alt, title) {
+    if (!isSafePostUrl(url, "src")) return "";
     let html =
       '<img src="' +
       escapeHtml(url) +
@@ -544,16 +635,10 @@
   }
 
   function linkedImageHtml(href, url, alt, title) {
-    return '<a href="' + escapeHtml(href) + '">' + imageHtml(url, alt, title) + "</a>";
-  }
-
-  function isSafeHref(url) {
-    const u = String(url || "").trim();
-    if (!u) return false;
-    if (/^(?:https?:|mailto:)/i.test(u)) return true;
-    if (/^#/.test(u) || (/^\//.test(u) && !/^\/\//.test(u))) return true;
-    if (/^\/\//.test(u)) return true;
-    return !/^[a-z][a-z0-9+.-]*:/i.test(u);
+    const img = imageHtml(url, alt, title);
+    if (!img) return "";
+    if (!isSafePostUrl(href, "href")) return img;
+    return '<a href="' + escapeHtml(href) + '">' + img + "</a>";
   }
 
   function parseMarkdownLinkAt(s, i) {
@@ -588,19 +673,18 @@
   }
 
   function linkHtml(href, text, title) {
+    const label = escapeHtml(text);
+    if (!isSafePostUrl(href, "href")) return label;
     let html = '<a href="' + escapeHtml(href) + '"';
     if (title) html += ' title="' + escapeHtml(title) + '"';
-    html += ">" + escapeHtml(text) + "</a>";
+    html += ">" + label + "</a>";
     return html;
   }
 
   function leftoverMarkdownLinkHtml(text, href, title) {
-    const embed = embedFromHref(href);
-    if (embed) return embed;
     if (isImageUrl(href) && (!String(text).trim() || String(text).trim() === href)) {
-      return imageHtml(href, "");
+      return imageHtml(href, "") || escapeHtml(text);
     }
-    if (!isSafeHref(href)) return "";
     return linkHtml(href, text, title);
   }
 
@@ -733,19 +817,23 @@
   function embedFromHref(href) {
     const id = youtubeIdFromUrl(href);
     if (id) return youtubeEmbedHtml(id);
-    const m3 = String(href || "").match(/3speak\.tv\/watch\?v=([^"&\s<]+)/i);
-    if (m3) return threeSpeakEmbedHtml(m3[1]);
     const tweetId = tweetIdFromUrl(href);
     if (tweetId) return tweetEmbedHtml(tweetId);
     return "";
   }
 
-  function embedImages(html) {
-    html = replaceMarkdownImages(html);
+  function embedWorldmappin(html) {
+    const re = new RegExp("(?:<p>\\s*)?" + WORLDMAPPIN_INNER + "(?:\\s*</p>)?", "gi");
+    return String(html || "").replace(re, function (_full, lat, lng, desc) {
+      const embed = worldmappinEmbedHtml(lat, lng, unescapeHtml(desc));
+      return embed || _full;
+    });
+  }
 
-    // Bare image URLs in HTML text (e.g. <center>https://i.ecency.com/…</center>).
+  function embedImages(html) {
+    // Bare image URLs left in text (e.g. <center>https://i.ecency.com/…</center>).
     // Skip quoted attributes and markdown/HTML destinations: ](url) href="url".
-    html = html.replace(
+    html = String(html || "").replace(
       /(^|[\s>])(https?:\/\/[^\s<)"']+)/gi,
       function (full, pre, raw) {
         const trimmed = raw.replace(/[.,;:!?]+$/, "");
@@ -758,32 +846,67 @@
     return html;
   }
 
+  // Code, pre, and other raw blocks keep their text. A 3Speak URL in a fence
+  // must not become a player after markdown has wrapped it in <code>.
+  function replaceOutsideRawHtml(html, re, fn) {
+    const raw = /<(pre|code|script|style|textarea|kbd|samp)\b[^>]*>[\s\S]*?<\/\1>/gi;
+    const src = String(html || "");
+    let out = "";
+    let last = 0;
+    let m;
+    while ((m = raw.exec(src))) {
+      out += src.slice(last, m.index).replace(re, fn);
+      out += m[0];
+      last = m.index + m[0].length;
+    }
+    out += src.slice(last).replace(re, fn);
+    return out;
+  }
+
   function embedMedia(html) {
+    html = embedWorldmappin(html);
     html = embedImages(html);
 
-    // Markdown [text](url) left intact inside HTML blocks (after images, <center>, …)
-    html = replaceMarkdownLinks(html);
-
-    // Linked YouTube / 3Speak URLs → responsive iframe
+    // Linked YouTube / 3Speak / X URLs → our player. The href was already
+    // checked by the whitelist. A 3Speak timestamp citation stays a link.
     html = html.replace(/<a\s+[^>]*href="([^"]+)"[^>]*>[\s\S]*?<\/a>/gi, (full, href) => {
-      return embedFromHref(href) || full;
+      const decoded = unescapeHtml(href);
+      const speak = threeSpeakFromUrl(decoded);
+      if (speak) {
+        if (!isThreeSpeakPlayerAnchor(full)) return full;
+        return threeSpeakEmbedHtml(speak.id, speak.route) || full;
+      }
+      return embedFromHref(decoded) || full;
     });
 
     // Bare YouTube URLs in HTML text (e.g. <th>https://youtube.com/shorts/…</th>).
     // Skip quoted attributes so iframe src= is not rewritten.
     html = html.replace(
       /(^|[^"'=])(https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?(?:[^<\s]*&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([\w-]{11})[^<\s]*)/gi,
-      (full, pre, _url, id) => pre + youtubeEmbedHtml(id)
+      (full, pre, _url, id) => {
+        const embed = youtubeEmbedHtml(id);
+        return embed ? pre + embed : full;
+      }
     );
 
-    html = html.replace(
-      /(^|[^"'=])(https?:\/\/(?:www\.)?3speak\.tv\/watch\?v=([^"&\s<]+))/gi,
-      (full, pre, _url, id) => pre + threeSpeakEmbedHtml(id)
+    html = replaceOutsideRawHtml(
+      html,
+      /(^|[^"'=])(https?:\/\/(?:www\.)?(?:play\.)?3speak\.tv\/(?:watch|embed)\?[^\s<)"']+)/gi,
+      (full, pre, raw) => {
+        const trimmed = raw.replace(/[.,;:!?]+$/, "");
+        const info = threeSpeakFromUrl(trimmed);
+        if (!info) return full;
+        const embed = threeSpeakEmbedHtml(info.id, info.route);
+        return embed ? pre + embed + raw.slice(trimmed.length) : full;
+      }
     );
 
     html = html.replace(
       /(^|[^"'=])(https?:\/\/(?:www\.|mobile\.)?(?:twitter|x)\.com\/(?:i\/web|[A-Za-z0-9_]+)\/status(?:es)?\/(\d+)[^<\s]*)/gi,
-      (full, pre, _url, id) => pre + tweetEmbedHtml(id)
+      (full, pre, _url, id) => {
+        const embed = tweetEmbedHtml(id);
+        return embed ? pre + embed : full;
+      }
     );
 
     return html;
@@ -1066,6 +1189,9 @@
   function looksLikeMarkdown(s) {
     const text = markdownSignalText(s);
     if (/[*_~`\[!]/.test(text)) return true;
+    // A bare URL is an autolink. Inside <sup> and other styling tags, marked
+    // would otherwise leave it as text.
+    if (/https?:\/\//i.test(text)) return true;
     if (/<[A-Za-z][A-Za-z0-9+.-]*:/.test(text)) return true;
     if (/^#{1,6}(?:\s|$)/m.test(text)) return true;
     if (/^[ \t]{0,3}(?:>|[-+*](?:\s|$)|\d+\.\s)/m.test(text)) return true;
@@ -1278,9 +1404,409 @@
     return out + src.slice(last);
   }
 
+  // Posts and comments: explicit element and attribute whitelist.
+  // script, style, iframe, object, embed, svg, math, font, and article never pass.
+  // style, class, color, and bgcolor never pass. id is kept so authors can
+  // link to anchors in the post, including when that id matches an element
+  // elsewhere on the page.
+  const POST_ALLOWED_TAGS = [
+    "a", "abbr", "address", "aside", "audio", "b", "blockquote", "br",
+    "caption", "center", "cite", "code", "col", "colgroup", "dd", "del", "details",
+    "div", "dl", "dt", "em", "figcaption", "figure", "footer", "h1", "h2",
+    "h3", "h4", "h5", "h6", "header", "hr", "i", "img", "ins", "kbd", "li", "mark",
+    "ol", "p", "pre", "q", "s", "samp", "section", "small", "source", "span",
+    "strike", "strong", "sub", "summary", "sup", "table", "tbody", "td", "tfoot",
+    "th", "thead", "time", "tr", "track", "u", "ul", "var", "video", "wbr",
+  ];
+
+  const POST_ALLOWED_ATTR = [
+    "id", "title", "dir", "lang", "href", "rel", "target", "name", "cite",
+    "src", "alt", "width", "height", "loading", "align", "valign", "colspan",
+    "rowspan", "span", "headers", "scope", "border", "cellpadding", "cellspacing",
+    "start", "reversed", "type", "value", "datetime", "controls", "poster",
+    "preload", "loop", "muted", "playsinline", "open", "kind", "srclang", "label",
+  ];
+
+  const POST_SANITIZE_CONFIG = {
+    ALLOWED_TAGS: POST_ALLOWED_TAGS,
+    ALLOWED_ATTR: POST_ALLOWED_ATTR,
+    ALLOW_DATA_ATTR: false,
+    ALLOW_ARIA_ATTR: false,
+    ALLOW_UNKNOWN_PROTOCOLS: false,
+    // Keep author ids even when they match a document property or another
+    // element on the page. Anchors inside the post should still work.
+    SANITIZE_DOM: false,
+    KEEP_CONTENT: true,
+    FORBID_TAGS: [
+      "script", "style", "iframe", "object", "embed", "applet", "frame",
+      "frameset", "base", "link", "meta", "form", "input", "button", "textarea",
+      "select", "option", "svg", "math", "noscript", "template", "noembed",
+      "noframes", "canvas", "font", "article",
+    ],
+    FORBID_ATTR: [
+      "style", "class", "srcset", "srcdoc", "formaction", "xlink:href",
+      "color", "bgcolor", "face", "size",
+    ],
+    FORBID_CONTENTS: [
+      "script", "style", "iframe", "object", "embed", "noscript", "noembed",
+      "noframes", "svg", "math", "template",
+    ],
+  };
+
+  const SRC_TAGS = { img: 1, video: 1, audio: 1, source: 1, track: 1 };
+  const MEASURE_TAGS = {
+    img: 1, video: 1, audio: 1, td: 1, th: 1, table: 1, col: 1, colgroup: 1,
+  };
+  const ALIGN_TAGS = {
+    img: 1, p: 1, div: 1, td: 1, th: 1, tr: 1, table: 1, caption: 1, h1: 1,
+    h2: 1, h3: 1, h4: 1, h5: 1, h6: 1, col: 1,
+  };
+  const REL_OK = { noopener: 1, noreferrer: 1, nofollow: 1, ugc: 1, external: 1 };
+
+  function isSafeAnchorId(value) {
+    const v = String(value || "");
+    if (!v || v.length > 200) return false;
+    return !/[\u0000-\u0020\u007F"'<>&=]/.test(v);
+  }
+
+  function isSafeMeasure(value) {
+    return /^\d{1,4}(?:\.\d+)?(?:%|px)?$/.test(String(value || "").trim());
+  }
+
+  function isSafeInt(value, max) {
+    const v = String(value || "").trim();
+    if (!/^\d{1,4}$/.test(v)) return false;
+    return Number(v) <= max;
+  }
+
+  // http(s) for images and media. Links may also be mailto, a fragment, or a
+  // same-document path. javascript:, data:, and protocol-relative URLs are not.
+  function isSafePostUrl(value, kind) {
+    const v = String(value == null ? "" : value).trim();
+    if (!v || /[\u0000-\u001F\u007F]/.test(v)) return false;
+    if (/^https?:\/\//i.test(v)) {
+      try {
+        const u = new URL(v);
+        return u.protocol === "http:" || u.protocol === "https:";
+      } catch (err) {
+        return false;
+      }
+    }
+    if (kind === "src" || kind === "poster") return false;
+    if (/^mailto:/i.test(v)) return kind === "href";
+    if (v.charAt(0) === "#") return true;
+    if (v.slice(0, 2) === "//" || v.slice(0, 2) === "/\\" || v.charAt(0) === "\\") return false;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(v)) return false;
+    return true;
+  }
+
+  function keepPostAttribute(tag, attr, value, data) {
+    switch (attr) {
+      case "href":
+        return tag === "a" && isSafePostUrl(value, "href");
+      case "cite":
+        return (
+          (tag === "blockquote" || tag === "q" || tag === "del" || tag === "ins") &&
+          isSafePostUrl(value, "href")
+        );
+      case "rel": {
+        if (tag !== "a") return false;
+        const kept = String(value || "")
+          .split(/\s+/)
+          .filter(function (part) {
+            return REL_OK[part.toLowerCase()];
+          });
+        if (!kept.length) return false;
+        data.attrValue = kept.join(" ");
+        return true;
+      }
+      case "target": {
+        if (tag !== "a") return false;
+        const target = String(value || "").toLowerCase();
+        if (target !== "_blank" && target !== "_self") return false;
+        data.attrValue = target;
+        return true;
+      }
+      case "name":
+        return tag === "a" && isSafeAnchorId(value);
+      case "src":
+        return !!SRC_TAGS[tag] && isSafePostUrl(value, "src");
+      case "poster":
+        return tag === "video" && isSafePostUrl(value, "poster");
+      case "alt":
+        return tag === "img";
+      case "width":
+      case "height":
+        return !!MEASURE_TAGS[tag] && isSafeMeasure(value);
+      case "loading":
+        return (tag === "img" || tag === "video") && /^(?:lazy|eager)$/i.test(value);
+      case "align":
+        return !!ALIGN_TAGS[tag] && /^(?:left|right|center|justify)$/i.test(String(value).trim());
+      case "valign":
+        return (
+          (tag === "td" || tag === "th" || tag === "tr") &&
+          /^(?:top|middle|bottom|baseline)$/i.test(String(value).trim())
+        );
+      case "colspan":
+      case "rowspan":
+        return (tag === "td" || tag === "th") && isSafeInt(value, 100);
+      case "span":
+        return (tag === "col" || tag === "colgroup") && isSafeInt(value, 100);
+      case "border":
+        return (tag === "table" || tag === "img") && isSafeInt(value, 50);
+      case "cellpadding":
+      case "cellspacing":
+        return tag === "table" && isSafeInt(value, 50);
+      case "start":
+        return tag === "ol" && /^-?\d{1,6}$/.test(String(value).trim());
+      case "reversed":
+        return tag === "ol";
+      case "type":
+        if (tag === "ol") return /^[1aAiI]$/.test(String(value).trim());
+        if (tag === "source" || tag === "track") {
+          return /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i.test(String(value).trim());
+        }
+        return false;
+      case "value":
+        return tag === "li" && /^-?\d{1,6}$/.test(String(value).trim());
+      case "datetime":
+        return tag === "time" && /^[\dT:Z.+-]{1,40}$/.test(String(value).trim());
+      case "controls":
+      case "loop":
+      case "muted":
+      case "playsinline":
+        return tag === "video" || tag === "audio";
+      case "preload":
+        return (tag === "video" || tag === "audio") && /^(?:none|metadata|auto)$/i.test(String(value).trim());
+      case "open":
+        return tag === "details";
+      case "headers":
+        if (tag !== "td" && tag !== "th") return false;
+        return String(value || "")
+          .split(/\s+/)
+          .every(isSafeAnchorId);
+      case "scope":
+        return (tag === "td" || tag === "th") && /^(?:col|row|colgroup|rowgroup)$/i.test(String(value).trim());
+      case "kind":
+        return (
+          tag === "track" &&
+          /^(?:subtitles|captions|descriptions|chapters|metadata)$/i.test(String(value).trim())
+        );
+      case "srclang":
+        return tag === "track" && /^[a-z]{2,8}(?:-[a-z0-9]{1,8})?$/i.test(String(value).trim());
+      case "label":
+        return tag === "track" && String(value || "").length <= 200;
+      default:
+        return false;
+    }
+  }
+
+  let postSanitizeHooksReady = false;
+
+  function ensurePostSanitizeHooks() {
+    if (postSanitizeHooksReady || !global.DOMPurify || typeof global.DOMPurify.addHook !== "function") {
+      return;
+    }
+    global.DOMPurify.addHook("uponSanitizeAttribute", function (node, data) {
+      const attr = data.attrName;
+      const tag = node && node.nodeName ? String(node.nodeName).toLowerCase() : "";
+      if (
+        !attr ||
+        attr === "style" ||
+        attr === "class" ||
+        attr === "color" ||
+        attr === "bgcolor" ||
+        attr === "face" ||
+        attr === "size" ||
+        attr.indexOf("on") === 0 ||
+        attr === "srcset" ||
+        attr === "srcdoc"
+      ) {
+        data.keepAttr = false;
+        return;
+      }
+      if (attr === "id") {
+        if (!isSafeAnchorId(data.attrValue)) data.keepAttr = false;
+        return;
+      }
+      if (attr === "title") return;
+      if (attr === "dir") {
+        const dir = String(data.attrValue || "").toLowerCase();
+        if (dir !== "ltr" && dir !== "rtl" && dir !== "auto") data.keepAttr = false;
+        else data.attrValue = dir;
+        return;
+      }
+      if (attr === "lang") {
+        if (!/^[a-z]{2,8}(?:-[a-z0-9]{1,8})*$/i.test(String(data.attrValue || "").trim())) {
+          data.keepAttr = false;
+        }
+        return;
+      }
+      if (!keepPostAttribute(tag, attr, data.attrValue, data)) data.keepAttr = false;
+    });
+    global.DOMPurify.addHook("afterSanitizeAttributes", function (node) {
+      if (!node || !node.getAttribute) return;
+      const tag = node.nodeName;
+      if (tag === "IMG" || tag === "SOURCE" || tag === "TRACK") {
+        if (!isSafePostUrl(node.getAttribute("src"), "src")) node.remove();
+        return;
+      }
+      if (tag === "VIDEO" || tag === "AUDIO") {
+        const src = node.getAttribute("src");
+        if (src && !isSafePostUrl(src, "src")) node.removeAttribute("src");
+        const poster = node.getAttribute("poster");
+        if (poster && !isSafePostUrl(poster, "poster")) node.removeAttribute("poster");
+        return;
+      }
+      if (tag === "A" && (node.getAttribute("target") || "").toLowerCase() === "_blank") {
+        const parts = (node.getAttribute("rel") || "").split(/\s+/).filter(Boolean);
+        if (parts.indexOf("noopener") < 0) parts.push("noopener");
+        if (parts.indexOf("noreferrer") < 0) parts.push("noreferrer");
+        node.setAttribute("rel", parts.join(" "));
+      }
+    });
+    postSanitizeHooksReady = true;
+  }
+
+  function unescapeHtml(s) {
+    return String(s || "")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/g, "&");
+  }
+
+  function htmlAttr(raw, name) {
+    const re = new RegExp(
+      "\\s" + name + "\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))",
+      "i"
+    );
+    const match = re.exec(raw);
+    if (!match) return "";
+    return unescapeHtml(match[1] || match[2] || match[3] || "").trim();
+  }
+
+  // A pasted player becomes a plain watch URL so the whitelist does not
+  // throw the address away with the iframe. The embed step builds our player.
+  function plainMediaUrl(raw) {
+    let src = htmlAttr(raw, "src") || htmlAttr(raw, "data");
+    if (!src || /[\u0000-\u001F\u007F]/.test(src)) return "";
+    if (src.slice(0, 2) === "//") src = "https:" + src;
+    let url;
+    try {
+      url = new URL(src);
+    } catch (err) {
+      return "";
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+    const host = url.hostname.replace(/^www\./i, "").toLowerCase();
+    if (
+      host === "youtube.com" ||
+      host === "youtube-nocookie.com" ||
+      host === "m.youtube.com" ||
+      host === "youtu.be"
+    ) {
+      const id = youtubeIdFromUrl(src);
+      return id ? "https://www.youtube.com/watch?v=" + id : "";
+    }
+    if (host === "3speak.tv" || host === "play.3speak.tv") {
+      const info = threeSpeakFromUrl(url.href);
+      return info ? "https://play.3speak.tv/" + info.route + "?v=" + info.id : "";
+    }
+    return "";
+  }
+
+  const RAW_SKIP_TAGS = new Set(["pre", "code", "script", "style", "textarea"]);
+
+  // Keep a YouTube or 3Speak address that an author pasted as a player.
+  // Fences, inline code, and code blocks stay untouched.
+  function rewriteKnownMediaPlayers(src) {
+    const s = String(src || "");
+    let out = "";
+    let i = 0;
+    const fence = { inFence: false, fenceMark: "" };
+    while (i < s.length) {
+      const fenceEnd = skipFenceLine(s, i, fence);
+      if (fenceEnd >= 0) {
+        out += s.slice(i, fenceEnd);
+        i = fenceEnd;
+        continue;
+      }
+      if (fence.inFence) {
+        out += s.charAt(i);
+        i++;
+        continue;
+      }
+      if (s.charAt(i) === "`") {
+        const span = readCodeSpan(s, i);
+        if (span) {
+          out += span.raw;
+          i = span.end;
+          continue;
+        }
+      }
+      if (s.startsWith("<!--", i)) {
+        const end = s.indexOf("-->", i + 4);
+        const to = end < 0 ? s.length : end + 3;
+        out += s.slice(i, to);
+        i = to;
+        continue;
+      }
+      if (s.charAt(i) !== "<") {
+        out += s.charAt(i);
+        i++;
+        continue;
+      }
+      const tag = parseHtmlTagAt(s, i);
+      if (!tag) {
+        out += s.charAt(i);
+        i++;
+        continue;
+      }
+      const name = tag.name.toLowerCase();
+      if (!tag.closing && !tag.selfClosing && RAW_SKIP_TAGS.has(name)) {
+        const close = findCloseTag(s, tag.end, tag.name);
+        if (close) {
+          out += s.slice(i, close.end);
+          i = close.end;
+          continue;
+        }
+      }
+      if (!tag.closing && (name === "iframe" || name === "object" || name === "embed")) {
+        const media = plainMediaUrl(tag.raw);
+        if (media) {
+          out += "\n\n" + media + "\n\n";
+          if (!tag.selfClosing) {
+            const close = findCloseTag(s, tag.end, tag.name);
+            i = close ? close.end : tag.end;
+          } else {
+            i = tag.end;
+          }
+          continue;
+        }
+      }
+      out += tag.raw;
+      i = tag.end;
+    }
+    return out;
+  }
+
+  function sanitizePostHtml(html) {
+    if (!global.DOMPurify || typeof global.DOMPurify.sanitize !== "function") return String(html || "");
+    ensurePostSanitizeHooks();
+    try {
+      return global.DOMPurify.sanitize(String(html || ""), POST_SANITIZE_CONFIG);
+    } catch (err) {
+      return "";
+    }
+  }
+
   function renderMarkdown(src) {
     ensureMarked();
-    const prepared = renderMarkdownInStylingTags(preprocessHiveMarkdown(src));
+    const prepared = renderMarkdownInStylingTags(
+      preprocessHiveMarkdown(String(src || "").replace(/\r\n/g, "\n"))
+    );
     let html;
     try {
       const parse =
@@ -1299,25 +1825,14 @@
       html = `<p>${escapeHtml(prepared).replace(/\n/g, "<br>")}</p>`;
     }
 
+    // Leftover markdown inside HTML blocks becomes tags, then the whitelist
+    // sees the whole post. Embeds, mentions, and tags are added after that.
+    html = replaceMarkdownImages(html);
+    html = replaceMarkdownLinks(html);
+    html = sanitizePostHtml(html);
     html = embedMedia(html);
     html = localizeHiveLinks(html);
     html = linkifyMentionsTags(html);
-
-    if (global.DOMPurify) {
-      html = global.DOMPurify.sanitize(html, {
-        ADD_TAGS: ["iframe", "center", "video", "source", "figure", "figcaption"],
-        ADD_ATTR: [
-          "allow",
-          "allowfullscreen",
-          "frameborder",
-          "src",
-          "target",
-          "rel",
-          "loading",
-          "title",
-        ],
-      });
-    }
     html = wrapWideTables(html);
     if (html.indexOf("twitter-tweet") !== -1) queueTwitterWidgets();
     return html;
