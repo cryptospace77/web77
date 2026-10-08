@@ -920,14 +920,48 @@
 
   function localizeHiveLinks(html) {
     const prefix = localAppPrefix();
-    html = html.replace(
+    html = String(html || "").replace(
       /https?:\/\/(?:www\.)?(?:peakd\.com|hive\.blog|ecency\.com)\/(?:[^"'/\s]+\/)?@([a-z0-9.\-]+)\/([a-zA-Z0-9\-\._]+)/gi,
       prefix + "@$1/$2"
     );
-    return html.replace(
+    html = html.replace(
       /https?:\/\/(?:www\.)?(?:peakd\.com|hive\.blog|ecency\.com)\/@([a-z0-9.\-]{3,16})\/?(?=[?#"'<\s]|$)/gi,
       prefix + "@$1"
     );
+    // Href stays /@user/permlink (or #/@user/permlink). A label that is that
+    // same path drops the slash before @, so the visible text is @user/permlink.
+    return normalizeHiveAtAnchorText(html);
+  }
+
+  function hiveAtAnchorLabel(href) {
+    const h = String(href || "").trim();
+    if (!h) return "";
+    const prefix = localAppPrefix();
+    let rest = "";
+    if (prefix && h.startsWith(prefix)) rest = h.slice(prefix.length);
+    else if (h.startsWith("/@")) rest = h.slice(1);
+    else if (h.startsWith("#/@")) rest = h.slice(2);
+    else return "";
+    if (!/^@[a-z0-9.\-]{3,16}(?=$|[/?#])/i.test(rest)) return "";
+    return rest;
+  }
+
+  function normalizeHiveAtAnchorText(html) {
+    return String(html || "").replace(/<a\b[^>]*>[\s\S]*?<\/a>/gi, (full) => {
+      const openEnd = full.indexOf(">");
+      if (openEnd < 0) return full;
+      const href = htmlAttr(full.slice(0, openEnd + 1), "href");
+      const label = hiveAtAnchorLabel(href);
+      if (!label || label === href) return full;
+      const closeAt = full.toLowerCase().lastIndexOf("</a>");
+      if (closeAt <= openEnd) return full;
+      const inner = full.slice(openEnd + 1, closeAt);
+      if (/<[a-z!/]/i.test(inner)) return full;
+      const text = unescapeHtml(inner).trim();
+      if (!text || text === label) return full;
+      if (text !== href && text !== "/" + label && text !== "#/" + label) return full;
+      return full.slice(0, openEnd + 1) + escapeHtml(label) + full.slice(closeAt);
+    });
   }
 
   function isMentionBoundary(ch) {
