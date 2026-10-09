@@ -6610,9 +6610,9 @@ let FILTER_LOW_REP = 20;
         ${meta}
         <a class="card-hit" href="${HiveMd.escapeHtml(postPath(shown))}">
           <h2>${HiveMd.escapeHtml(shown.title || "(untitled)")}</h2>
-          <p class="card-excerpt">${HiveMd.escapeHtml(HiveMd.excerpt(shown, 200))}</p>
-          ${thumb}
         </a>
+        <p class="card-excerpt">${HiveMd.excerpt(shown, 200, { preserveLineBreaks: false, maxLines: 3 })}</p>
+        ${thumb ? `<a class="card-thumb-link" href="${HiveMd.escapeHtml(postPath(shown))}">${thumb}</a>` : ""}
         <div class="card-stats">
           ${voteControlHtml(shown, "pills")}
           ${commentCountHtml(shown.children, postPath(shown))}

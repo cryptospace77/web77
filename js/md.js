@@ -82,24 +82,572 @@
       .replace(new RegExp(WORLDMAPPIN_INNER, "gi"), " ");
   }
 
-  function stripMarkdown(src) {
-    return stripWorldmappinSnippets(src)
-      .replace(/```[\s\S]*?```/g, " ")
-      .replace(/`[^`]*`/g, " ")
-      .replace(/!\[[^\]]*\]\([^)]+\)/g, " ")
-      .replace(/\[([^\]]*)\]\([^)]+\)/g, "$1")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/[#>*_~]/g, " ")
-      .replace(/https?:\/\/\S+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+  const EXCERPT_ABBREV = {
+    mr: 1, mrs: 1, ms: 1, mz: 1, dr: 1, prof: 1, sr: 1, jr: 1, vs: 1,
+    etc: 1, eg: 1, ie: 1, st: 1, fig: 1, al: 1, ed: 1, vol: 1,
+    pp: 1, ca: 1, approx: 1, dept: 1, inc: 1, ltd: 1, co: 1,
+  };
+
+  function decodeHtmlEntities(src) {
+    return String(src || "").replace(/&(#x?[0-9a-f]+|[a-z][a-z0-9]+);/gi, function (full, body) {
+      if (body.charAt(0) === "#") {
+        const hex = body.charAt(1) === "x" || body.charAt(1) === "X";
+        const cp = hex ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
+        if (!cp || cp < 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return full;
+        if (cp < 32 && cp !== 9 && cp !== 10 && cp !== 13) return "";
+        const ch = String.fromCodePoint(cp);
+        if (/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/.test(ch)) return " ";
+        return ch;
+      }
+      const named = {
+        amp: "&", lt: "<", gt: ">", quot: '"', apos: "'",
+        nbsp: " ", ensp: " ", emsp: " ", emspc: " ",
+        emsp13: " ", emsp14: " ", numsp: " ", puncsp: " ", thinsp: " ", hairsp: " ",
+        hellip: "…", mdash: "—", ndash: "–", laquo: "«", raquo: "»",
+        bull: "•", middot: "·", copy: "©", reg: "®", trade: "™",
+      };
+      const ch = named[body.toLowerCase()];
+      return ch == null ? full : ch;
+    });
   }
 
-  function excerpt(post, maxLen) {
-    const limit = maxLen || 180;
-    const raw = stripMarkdown(post && post.body);
-    if (raw.length <= limit) return raw;
-    return raw.slice(0, limit).replace(/\s+\S*$/, "") + "…";
+  function stripFencedCode(src) {
+    const lines = String(src || "").split("\n");
+    const out = [];
+    let inFence = false;
+    let mark = "";
+    let len = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const open = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(lines[i]);
+      if (open) {
+        const ch = open[1].charAt(0);
+        if (!inFence) {
+          inFence = true;
+          mark = ch;
+          len = open[1].length;
+          continue;
+        }
+        if (ch === mark && open[1].length >= len) {
+          inFence = false;
+          mark = "";
+          len = 0;
+          continue;
+        }
+      }
+      if (!inFence) out.push(lines[i]);
+    }
+    return out.join("\n");
+  }
+
+  function stripHtml(src) {
+    let s = String(src || "");
+    s = s.replace(/<!--[\s\S]*?-->/g, " ");
+    s = s.replace(/<(https?:\/\/[^>\s]+)>/gi, "$1");
+    s = s.replace(
+      /<(script|style|iframe|object|embed|svg|math|noscript|template|textarea|noembed|noframes|canvas|form)\b[^>]*>[\s\S]*?<\/\1>/gi,
+      " "
+    );
+    s = s.replace(
+      /<(script|style|iframe|object|embed|svg|math|noscript|template|textarea|noembed|noframes|canvas|form)\b[^>]*\/?>/gi,
+      " "
+    );
+    s = s.replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/gi, "\n");
+    s = s.replace(/<img\b[^>]*>/gi, " ");
+    s = s.replace(/<hr\b[^>]*\/?>/gi, "\n");
+    s = s.replace(/<br\b[^>]*\/?>/gi, "\n");
+    s = s.replace(/<\/(p|h[1-6]|blockquote|ul|ol|table|pre|figure|address)>/gi, "\n\n");
+    s = s.replace(/<\/(div|li|tr|section|header|footer|center|caption|figcaption|article)>/gi, "\n");
+    s = s.replace(/<\/t[dh]>/gi, " ");
+    s = s.replace(/<\/?[a-z][a-z0-9:-]*\b[^>]*>/gi, "");
+    return decodeHtmlEntities(s);
+  }
+
+  // Punctuation and an unmatched closer stay in the excerpt. The address does not.
+  function excerptUrlTrail(raw) {
+    let url = String(raw || "");
+    let trail = "";
+    while (url) {
+      const parts = splitPlainUrl(url);
+      if (parts.url !== url) {
+        trail = parts.trail + trail;
+        url = parts.url;
+        continue;
+      }
+      const ch = url.charAt(url.length - 1);
+      let peel = false;
+      if (ch === "]" || ch === "}") {
+        const open = ch === "]" ? "[" : "{";
+        let opens = 0;
+        let closes = 0;
+        for (let k = 0; k < url.length; k++) {
+          const c = url.charAt(k);
+          if (c === open) opens++;
+          else if (c === ch) closes++;
+        }
+        peel = closes > opens;
+      } else if (ch === '"' || ch === "'" || ch === "”" || ch === "’") {
+        peel = true;
+      }
+      if (!peel) break;
+      trail = ch + trail;
+      url = url.slice(0, -1);
+    }
+    return trail;
+  }
+
+  function tidyExcerptGaps(src, preserve) {
+    let out = String(src || "");
+    out = out.replace(/\(\s*\)/g, "");
+    out = out.replace(/\[\s*\]/g, "");
+    out = out.replace(/\{\s*\}/g, "");
+    out = out.replace(/(?:["“”]){2}/g, "");
+    out = out.replace(/(?:['’]){2}/g, "");
+    out = out.replace(/[ \t]{2,}/g, " ");
+    out = out.replace(/[ \t]+([.,;:!?])/g, "$1");
+    out = out.replace(/[ \t]*\n[ \t]*/g, "\n");
+    if (preserve) out = out.replace(/\n{3,}/g, "\n\n");
+    else out = out.replace(/\n{2,}/g, "\n");
+    return out.trim();
+  }
+
+  // Bare http(s) addresses are not excerpt text. Drop them before measuring maxLen.
+  function stripPlainUrls(src, preserve) {
+    const s = String(src || "");
+    let out = "";
+    let i = 0;
+    while (i < s.length) {
+      const match = /https?:\/\/[^\s<]+/i.exec(s.slice(i));
+      if (!match) {
+        out += s.slice(i);
+        break;
+      }
+      const at = i + match.index;
+      if (at > 0 && /[A-Za-z0-9@＠/]/.test(s.charAt(at - 1))) {
+        out += s.slice(i, at + match[0].length);
+        i = at + match[0].length;
+        continue;
+      }
+      out += s.slice(i, at);
+      out += excerptUrlTrail(match[0]);
+      i = at + match[0].length;
+    }
+    return tidyExcerptGaps(out, preserve);
+  }
+
+  function mapOutsideUrls(src, fn) {
+    const s = String(src || "");
+    const re = /https?:\/\/[^\s<]+/gi;
+    let out = "";
+    let last = 0;
+    let match;
+    while ((match = re.exec(s))) {
+      out += fn(s.slice(last, match.index));
+      out += match[0];
+      last = match.index + match[0].length;
+    }
+    out += fn(s.slice(last));
+    return out;
+  }
+
+  function stripEmphasisMarkers(src) {
+    return mapOutsideUrls(src, function (chunk) {
+      let out = chunk;
+      for (let n = 0; n < 4; n++) {
+        const next = out
+          .replace(/~~([^~\n]+)~~/g, "$1")
+          .replace(/\*\*\*([^*\n]+)\*\*\*/g, "$1")
+          .replace(/___([^_\n]+)___/g, "$1")
+          .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+          .replace(/__([^_\n]+)__/g, "$1")
+          .replace(/(^|[^\w*])\*([^*\n]+)\*(?!\*)/g, "$1$2")
+          .replace(/(^|[^\w_])_([^_\n]+)_(?!_)/g, "$1$2");
+        if (next === out) {
+          out = next;
+          break;
+        }
+        out = next;
+      }
+      return out.replace(/\*\*|__|~~/g, "");
+    });
+  }
+
+  function stripInlineMarkdown(src) {
+    const s = String(src || "");
+    let out = "";
+    let i = 0;
+    while (i < s.length) {
+      if (s.charAt(i) === "!" && s.charAt(i + 1) === "[") {
+        const img = parseMarkdownImageAt(s, i);
+        if (img) {
+          i = img.end;
+          continue;
+        }
+      }
+      if (s.charAt(i) === "[") {
+        const linked = parseLinkedMarkdownImageAt(s, i);
+        if (linked) {
+          i = linked.end;
+          continue;
+        }
+        const link = parseMarkdownLinkAt(s, i);
+        if (link) {
+          const label = String(link.text || "").trim();
+          if (label) out += label;
+          i = link.end;
+          continue;
+        }
+      }
+      if (s.charAt(i) === "`") {
+        let n = 0;
+        while (s.charAt(i + n) === "`") n++;
+        const fence = "`".repeat(n);
+        const close = s.indexOf(fence, i + n);
+        if (close > i) {
+          out += s.slice(i + n, close);
+          i = close + n;
+          continue;
+        }
+      }
+      if (s.charAt(i) === "\\" && i + 1 < s.length && /[\\`*_{}[\]()#+\-.!|>~]/.test(s.charAt(i + 1))) {
+        out += s.charAt(i + 1);
+        i += 2;
+        continue;
+      }
+      out += s.charAt(i);
+      i++;
+    }
+    out = out.replace(/!\[[^\]]*\]\[[^\]]*\]/g, "");
+    out = out.replace(/\[([^\]]+)\]\[[^\]]*\]/g, "$1");
+    out = out.replace(/\[\^[^\]]+\]/g, "");
+    return stripEmphasisMarkers(out);
+  }
+
+  function isMdTableDelimiter(line) {
+    let t = String(line || "").trim();
+    if (!t || t.indexOf("|") < 0) return false;
+    if (t.charAt(0) === "|") t = t.slice(1);
+    if (t.charAt(t.length - 1) === "|") t = t.slice(0, -1);
+    const cells = t.split("|");
+    if (!cells.length) return false;
+    for (let i = 0; i < cells.length; i++) {
+      if (!/^\s*:?-+\:?\s*$/.test(cells[i])) return false;
+    }
+    return true;
+  }
+
+  function isMdTableRow(line) {
+    const t = String(line || "").trim();
+    if (!t || t.indexOf("|") < 0) return false;
+    return !isMdTableDelimiter(t);
+  }
+
+  function formatMdTableRow(line) {
+    let t = String(line || "").trim();
+    if (t.charAt(0) === "|") t = t.slice(1);
+    if (t.charAt(t.length - 1) === "|") t = t.slice(0, -1);
+    const cells = t.split("|").map(function (cell) {
+      return stripInlineMarkdown(cell).replace(/\s+/g, " ").trim();
+    });
+    return cells.join(" ").replace(/[ \t]{2,}/g, " ").trim();
+  }
+
+  function isThematicBreakLine(line) {
+    return /^[ \t]{0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})[ \t]*$/.test(line);
+  }
+
+  function isSetextUnderline(line) {
+    return /^[ \t]{0,3}(?:={3,}|-{3,})[ \t]*$/.test(line);
+  }
+
+  function looksLikeSetextText(line) {
+    const prev = String(line || "").trim();
+    if (!prev) return false;
+    if (/[<>]/.test(prev)) return false;
+    if (/^(?:-{3,}|\*{3,}|_{3,}|={3,})$/.test(prev)) return false;
+    if (/^(?:#{1,6}(?:[ \t]|$)|[-*+][ \t]|\d{1,9}[.)][ \t]|>)/.test(prev)) return false;
+    return true;
+  }
+
+  function renderInlineLine(raw) {
+    let content = String(raw || "");
+    content = content.replace(/^(?:[ \t]{0,3}>[ \t]*)+/, "");
+    content = content.replace(/^[ \t]{0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+/, "");
+    return stripInlineMarkdown(content).replace(/[ \t]+/g, " ").trim();
+  }
+
+  function excerptBreakRank(kind) {
+    if (kind === "para") return 3;
+    if (kind === "sep") return 2;
+    return 1;
+  }
+
+  function cleanExcerptPiece(part, preserve) {
+    const lines = String(part.text || "")
+      .split("\n")
+      .map(function (line) {
+        return line.replace(/[ \t]+/g, " ").trim();
+      })
+      .filter(Boolean);
+    if (!lines.length) return "";
+    if (part.rows || preserve) return lines.join("\n");
+    return lines.join(" ");
+  }
+
+  function excerptSeparator(brk, preserve, prevRows, nextRows) {
+    if (prevRows || nextRows) {
+      if (preserve && brk === "para") return "\n\n";
+      return "\n";
+    }
+    if (!preserve) return " ";
+    if (brk === "para") return "\n\n";
+    return "\n";
+  }
+
+  function joinExcerptParts(parts, preserve) {
+    const items = [];
+    let brk = "";
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (part.break) {
+        if (items.length && (!brk || excerptBreakRank(part.break) > excerptBreakRank(brk))) brk = part.break;
+        continue;
+      }
+      const text = cleanExcerptPiece(part, preserve);
+      if (!text) continue;
+      if (items.length) {
+        const prev = items[items.length - 1];
+        items.push({
+          text: excerptSeparator(brk, preserve, prev.rows, !!part.rows),
+          rows: false,
+        });
+      }
+      items.push({ text: text, rows: !!part.rows });
+      brk = "";
+    }
+    let out = "";
+    for (let i = 0; i < items.length; i++) out += items[i].text;
+    out = out.replace(/[ \t]*\n[ \t]*/g, "\n");
+    if (preserve) out = out.replace(/\n{3,}/g, "\n\n");
+    else out = out.replace(/[ \t]{2,}/g, " ");
+    return out.replace(/[ \t]{2,}/g, " ").trim();
+  }
+
+  function stripMarkdownBlocks(src, preserve) {
+    const lines = String(src || "").split("\n");
+    const parts = [];
+    let buf = [];
+
+    function flushBuf() {
+      if (!buf.length) return;
+      const text = buf
+        .map(renderInlineLine)
+        .filter(Boolean)
+        .join("\n");
+      buf = [];
+      if (text.trim()) parts.push({ text: text });
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+      if (!trimmed) {
+        flushBuf();
+        parts.push({ break: "para" });
+        continue;
+      }
+      if (/^[ \t]{0,3}\[[^\]]+\]:[ \t]+\S/.test(line)) continue;
+      if (isMdTableRow(line) && i + 1 < lines.length && isMdTableDelimiter(lines[i + 1])) {
+        flushBuf();
+        const rows = [];
+        const header = formatMdTableRow(line);
+        if (header) rows.push(header);
+        i += 2;
+        while (i < lines.length && isMdTableRow(lines[i])) {
+          const row = formatMdTableRow(lines[i]);
+          if (row) rows.push(row);
+          i++;
+        }
+        i--;
+        if (rows.length) parts.push({ text: rows.join("\n"), rows: true });
+        parts.push({ break: "para" });
+        continue;
+      }
+      if (isSetextUnderline(trimmed) && buf.length && buf.every(looksLikeSetextText)) {
+        const heading = buf.map(renderInlineLine).filter(Boolean).join(preserve ? "\n" : " ");
+        buf = [];
+        if (heading) parts.push({ text: heading });
+        parts.push({ break: "para" });
+        continue;
+      }
+      if (isThematicBreakLine(line) || isSetextUnderline(trimmed)) {
+        flushBuf();
+        parts.push({ break: "sep" });
+        continue;
+      }
+      const heading = parseAtxHeadingLine(line);
+      if (heading) {
+        flushBuf();
+        const text = stripInlineMarkdown(heading.text).replace(/\s+/g, " ").trim();
+        if (text) parts.push({ text: text });
+        parts.push({ break: "para" });
+        continue;
+      }
+      buf.push(line);
+    }
+    flushBuf();
+    return joinExcerptParts(parts, preserve);
+  }
+
+  function stripMarkdown(src, preserveLineBreaks) {
+    let text = String(src || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    text = stripWorldmappinSnippets(text);
+    text = stripFencedCode(text);
+    return stripMarkdownBlocks(text, !!preserveLineBreaks);
+  }
+
+  function sanitizeExcerptText(src) {
+    // Tags are already gone. Drop controls, then linkify escapes the rest.
+    return String(src || "")
+      .replace(/\r/g, "")
+      .replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, " ")
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
+  }
+
+  function isDecimalDot(s, i) {
+    return /\d/.test(s.charAt(i - 1)) && /\d/.test(s.charAt(i + 1));
+  }
+
+  function isAbbreviationDot(s, i) {
+    let j = i - 1;
+    while (j >= 0 && /[A-Za-z]/.test(s.charAt(j))) j--;
+    const word = s.slice(j + 1, i);
+    if (!word) return false;
+    if (word.length === 1) return true;
+    if (word.toLowerCase() === "no") {
+      let k = i + 1;
+      while (k < s.length && /\s/.test(s.charAt(k))) k++;
+      return /\d/.test(s.charAt(k));
+    }
+    return !!EXCERPT_ABBREV[word.toLowerCase()];
+  }
+
+  function firstSentenceEnd(text) {
+    const s = String(text || "");
+    for (let i = 0; i < s.length; i++) {
+      const ch = s.charAt(i);
+      if (ch !== "." && ch !== "!" && ch !== "?" && ch !== "…" && ch !== "。" && ch !== "！" && ch !== "？") {
+        continue;
+      }
+      if ((ch === "." || ch === "!" || ch === "?") && /[.!?]/.test(s.charAt(i + 1))) continue;
+      if (ch === "." && (isDecimalDot(s, i) || isAbbreviationDot(s, i))) continue;
+      let end = i + 1;
+      while (end < s.length && /['"”’)\]]/.test(s.charAt(end))) end++;
+      if (/[。！？…]/.test(ch) || end >= s.length || /\s/.test(s.charAt(end))) return end;
+    }
+    return -1;
+  }
+
+  // maxLen is the length of the returned text. The ellipsis is one of those characters.
+  // A word that ends inside the budget stays. A word cut in half is left off.
+  function clipExcerpt(text, maxLen, firstSentence) {
+    const limit = Number(maxLen) > 0 ? Math.floor(Number(maxLen)) : 180;
+    const src = String(text || "").replace(/^\s+/, "");
+    if (!src || limit < 1) return "";
+    if (firstSentence) {
+      const sentence = firstSentenceEnd(src);
+      if (sentence > 0 && sentence <= limit) {
+        return src.slice(0, sentence).replace(/[ \t]+$/, "");
+      }
+    }
+    if (src.length <= limit) return src.replace(/\s+$/, "");
+    const budget = limit - 1;
+    if (budget <= 0) return "…";
+    let end = budget;
+    if (end < src.length) {
+      const lead = src.charCodeAt(end - 1);
+      const tail = src.charCodeAt(end);
+      if (lead >= 0xd800 && lead <= 0xdbff && tail >= 0xdc00 && tail <= 0xdfff) end -= 1;
+    }
+    let slice = end > 0 ? src.slice(0, end) : "";
+    const next = src.charAt(end);
+    const last = slice.charAt(slice.length - 1);
+    if (slice && next && !/\s/.test(next) && !/\s/.test(last)) {
+      const trimmed = slice.replace(/\s+\S*$/, "");
+      if (trimmed.trim()) slice = trimmed;
+    }
+    slice = slice.replace(/[\s\u00a0]+$/, "");
+    if (!slice) return "…";
+    return slice + "…";
+  }
+
+  function excerptLineLimit(value) {
+    const n = Math.floor(Number(value));
+    return n > 0 ? n : 0;
+  }
+
+  function excerptMode(preserveLineBreaks, firstSentence, compactNewlines, maxLines) {
+    if (preserveLineBreaks && typeof preserveLineBreaks === "object") {
+      return {
+        preserveLineBreaks: !!preserveLineBreaks.preserveLineBreaks,
+        firstSentence: !!(preserveLineBreaks.firstSentence || preserveLineBreaks.sentence),
+        compactNewlines: !!preserveLineBreaks.compactNewlines,
+        maxLines: excerptLineLimit(preserveLineBreaks.maxLines),
+      };
+    }
+    return {
+      preserveLineBreaks: !!preserveLineBreaks,
+      firstSentence: !!firstSentence,
+      compactNewlines: !!compactNewlines,
+      maxLines: excerptLineLimit(maxLines),
+    };
+  }
+
+  // Keep the first maxLines output lines. A later line adds the ellipsis.
+  function clipExcerptLines(text, maxLines) {
+    const limit = excerptLineLimit(maxLines);
+    const src = String(text || "");
+    if (!src || !limit) return src;
+    const lines = src.split("\n");
+    if (lines.length <= limit) return src;
+    const kept = lines.slice(0, limit).join("\n").replace(/[ \t\u00a0]+$/, "");
+    if (!kept) return "…";
+    if (kept.charAt(kept.length - 1) === "…") return kept;
+    return kept + "…";
+  }
+
+  function linkifyUsernames(text) {
+    const s = String(text || "");
+    let out = "";
+    let i = 0;
+    while (i < s.length) {
+      const at = s.charAt(i);
+      if ((at === "@" || at === "＠") && isMentionBoundary(s.charAt(i - 1))) {
+        const mention = /^([a-z][a-z0-9.\-]*[a-z0-9])/i.exec(s.slice(i + 1));
+        if (mention && mention[1].length >= 3 && mention[1].length <= 16) {
+          out += mentionHtml(at, mention[1]);
+          i += 1 + mention[1].length;
+          continue;
+        }
+      }
+      out += escapeHtml(s.charAt(i));
+      i++;
+    }
+    return out;
+  }
+
+  // Strip markdown, then HTML, then plain URLs. maxLen counts that text.
+  // maxLines counts newline-separated output lines and abbreviates after that.
+  // The ellipsis counts. Only @usernames become links.
+  // compactNewlines folds every break into one line when preserveLineBreaks is on.
+  function excerpt(post, maxLen, preserveLineBreaks, firstSentence, compactNewlines, maxLines) {
+    const opts = excerptMode(preserveLineBreaks, firstSentence, compactNewlines, maxLines);
+    let text = stripMarkdown(post && post.body, opts.preserveLineBreaks);
+    text = stripHtml(text);
+    text = stripPlainUrls(text, opts.preserveLineBreaks);
+    text = sanitizeExcerptText(text);
+    if (opts.preserveLineBreaks && opts.compactNewlines) text = text.replace(/\n{2,}/g, "\n");
+    text = clipExcerptLines(text, opts.maxLines);
+    return linkifyUsernames(clipExcerpt(text, maxLen, opts.firstSentence));
   }
 
   /** Extract a YouTube video id from a URL string, or empty string. */
@@ -175,10 +723,7 @@
     const out = [];
     let inFence = false;
     let fenceMark = "";
-    const parseInline =
-      global.marked && typeof global.marked.parseInline === "function"
-        ? global.marked.parseInline.bind(global.marked)
-        : null;
+    const parseInline = global.marked?.parseInline || null;
     for (let i = 0; i < lines.length; i++) {
       const fence = lines[i].match(/^[ \t]{0,3}(`{3,}|~{3,})/);
       if (fence) {
@@ -1376,13 +1921,7 @@
 
   function parseWithMarked(src) {
     ensureMarked();
-    const parse =
-      global.marked &&
-      (typeof global.marked.parse === "function"
-        ? global.marked.parse.bind(global.marked)
-        : typeof global.marked === "function"
-          ? global.marked
-          : null);
+    const parse = global.marked?.parse || null;
     if (!parse) return null;
     try {
       return parse(src);
@@ -1996,13 +2535,7 @@
     );
     let html;
     try {
-      const parse =
-        global.marked &&
-        (typeof global.marked.parse === "function"
-          ? global.marked.parse.bind(global.marked)
-          : typeof global.marked === "function"
-            ? global.marked
-            : null);
+      const parse = global.marked?.parse || null;
       if (parse) {
         html = parse(prepared);
       } else {

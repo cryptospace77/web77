@@ -2004,6 +2004,30 @@ a.community:hover {
   overflow-wrap: break-word;
 }
 
+.card-excerpt a {
+  position: relative;
+  z-index: 1;
+}
+
+.card-excerpt a.mention {
+  color: var(--gray);
+}
+
+.card-excerpt a.mention:hover {
+  color: var(--yellow);
+}
+
+.card-thumb-link {
+  display: block;
+  position: relative;
+  z-index: 1;
+  line-height: 0;
+}
+
+.card-thumb-link:hover {
+  text-shadow: none;
+}
+
 .card-stats {
   position: relative;
   z-index: 1;
