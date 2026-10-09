@@ -4273,6 +4273,72 @@ body:has(#publishOverlay:not([hidden])) {
   border-color: var(--border-hot);
 }
 
+.publish-loc-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: nowrap;
+}
+
+.publish-md {
+  position: relative;
+  display: flex;
+}
+
+.publish-composer:has(.publish-md.is-open) {
+  z-index: 6;
+}
+
+#publishMdBtn {
+  letter-spacing: 0;
+  min-width: 2.4rem;
+  padding-left: 0.65rem;
+  padding-right: 0.65rem;
+}
+
+#publishMdBtn[aria-expanded="true"] {
+  color: var(--yellow);
+  border-color: var(--border-hot);
+}
+
+.publish-md-menu {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 0.35rem);
+  z-index: 8;
+  min-width: 9.5rem;
+  padding: 0.35rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border-hot);
+  border-radius: var(--radius);
+  box-shadow: var(--glow-red), 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.publish-md-menu.is-up {
+  top: auto;
+  bottom: calc(100% + 0.35rem);
+}
+
+.publish-md-item {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.7rem;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--gray);
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.publish-md-item:hover,
+.publish-md-item:focus-visible {
+  color: var(--yellow);
+  background: rgba(227, 19, 55, 0.12);
+}
+
 #locationOverlay {
   z-index: 70;
   align-items: flex-start;

@@ -4862,6 +4862,7 @@ let FILTER_LOW_REP = 20;
     const btn = $("#publishDestBtn");
     if (!menu || !btn) return;
     const open = menu.hidden;
+    if (open) closeMdMenu();
     menu.hidden = !open;
     btn.setAttribute("aria-expanded", open ? "true" : "false");
     if (open) loadPublishSubs();
@@ -5678,6 +5679,7 @@ let FILTER_LOW_REP = 20;
 
   function openLocationDialog() {
     if (editingComment() || publishDiscardOpen()) return;
+    closeMdMenu();
     const ov = $("#locationOverlay");
     const body = $("#publishBody");
     if (!ov || !body) return;
@@ -5899,6 +5901,7 @@ let FILTER_LOW_REP = 20;
     const pageEl = $("#publishPage");
     if (pageEl) pageEl.classList.remove("is-pending");
     closeDestMenu();
+    closeMdMenu();
     paintPublishChrome();
   }
 
@@ -5911,6 +5914,7 @@ let FILTER_LOW_REP = 20;
     const ov = $("#publishOverlay");
     if (ov) ov.hidden = true;
     closeDestMenu();
+    closeMdMenu();
     setPublishFabHidden(false);
     if (publishEdit) {
       publishEdit = null;
@@ -7673,11 +7677,189 @@ let FILTER_LOW_REP = 20;
     }
   }
 
+  let publishBodySel = null;
+
+  function rememberPublishBodySel() {
+    const body = $("#publishBody");
+    if (!body) return;
+    publishBodySel = {
+      start: body.selectionStart,
+      end: body.selectionEnd,
+      direction: body.selectionDirection || "none",
+    };
+  }
+
+  // The menu button takes focus on click, which can collapse the textarea
+  // selection. Prefer a still-open range, then the range saved before that.
+  function publishBodyRange(body) {
+    const live = {
+      start: body.selectionStart,
+      end: body.selectionEnd,
+      direction: body.selectionDirection || "none",
+    };
+    if (document.activeElement === body || live.start !== live.end) return live;
+    if (!publishBodySel) return live;
+    const end = Math.min(publishBodySel.end, body.value.length);
+    const start = Math.min(publishBodySel.start, end);
+    return { start: start, end: end, direction: publishBodySel.direction || "none" };
+  }
+
+  function mdMenuOpen() {
+    const menu = $("#publishMdMenu");
+    return Boolean(menu && !menu.hidden);
+  }
+
+  function closeMdMenu() {
+    const menu = $("#publishMdMenu");
+    const btn = $("#publishMdBtn");
+    const wrap = $("#publishMd");
+    if (menu) {
+      menu.hidden = true;
+      menu.classList.remove("is-up");
+      menu.style.left = "";
+    }
+    if (btn) btn.setAttribute("aria-expanded", "false");
+    if (wrap) wrap.classList.remove("is-open");
+  }
+
+  function placeMdMenu() {
+    const menu = $("#publishMdMenu");
+    const btn = $("#publishMdBtn");
+    if (!menu || !btn) return;
+    menu.classList.remove("is-up");
+    menu.style.left = "0px";
+    const btnRect = btn.getBoundingClientRect();
+    const height = menu.offsetHeight;
+    const spaceBelow = window.innerHeight - btnRect.bottom;
+    const spaceAbove = btnRect.top;
+    if (spaceBelow < height + 12 && spaceAbove > spaceBelow) menu.classList.add("is-up");
+    const rect = menu.getBoundingClientRect();
+    const overflow = rect.right - window.innerWidth + 8;
+    if (overflow > 0) menu.style.left = -overflow + "px";
+  }
+
+  function toggleMdMenu() {
+    const menu = $("#publishMdMenu");
+    const btn = $("#publishMdBtn");
+    const wrap = $("#publishMd");
+    if (!menu || !btn) return;
+    const open = menu.hidden;
+    if (!open) {
+      closeMdMenu();
+      return;
+    }
+    closeDestMenu();
+    menu.hidden = false;
+    btn.setAttribute("aria-expanded", "true");
+    if (wrap) wrap.classList.add("is-open");
+    placeMdMenu();
+  }
+
+  function prefixMarkdownLines(text, prefix) {
+    return String(text).split("\n").map((line) => prefix + line).join("\n");
+  }
+
+  function markdownCodeFence(selected) {
+    let fence = "```";
+    while (selected.indexOf(fence) !== -1) fence += "`";
+    const inner = selected.charAt(selected.length - 1) === "\n" ? selected : selected + "\n";
+    return fence + "\n" + inner + fence;
+  }
+
+  function markdownCodeSnippet(selected) {
+    if (selected.indexOf("\n") === -1 && selected.indexOf("`") === -1) {
+      return { snippet: "`" + selected + "`", block: false };
+    }
+    return { snippet: markdownCodeFence(selected), block: true };
+  }
+
+  function markdownInsert(kind, selected) {
+    const video = '<video controls>\n<source src="self-hosted video url">\n</video>';
+    const table = "|column1|column2|column3|\n|-|-|-|\n|content1|content2|content3|";
+    if (kind === "video") return { snippet: video, block: true, replace: false };
+    if (kind === "table") return { snippet: table, block: true, replace: false };
+    const has = selected.trim().length > 0;
+    if (!has) {
+      if (kind === "heading") return { snippet: "## heading", block: true, replace: true };
+      if (kind === "bold") return { snippet: "**bold**", block: false, replace: true };
+      if (kind === "italics") return { snippet: "*italic*", block: false, replace: true };
+      if (kind === "strike") return { snippet: "~~strike~~", block: false, replace: true };
+      if (kind === "quote") return { snippet: "> quote", block: true, replace: true };
+      if (kind === "link") return { snippet: "[link text](url)", block: false, replace: true };
+      if (kind === "image") return { snippet: "![alt text](url)", block: false, replace: true };
+      if (kind === "code") return { snippet: "`code`", block: false, replace: true };
+      if (kind === "codeblock") return { snippet: "```\ncode\n```", block: true, replace: true };
+      return null;
+    }
+    if (kind === "heading") return { snippet: prefixMarkdownLines(selected, "## "), block: true, replace: true };
+    if (kind === "bold") return { snippet: "**" + selected + "**", block: false, replace: true };
+    if (kind === "italics") return { snippet: "*" + selected + "*", block: false, replace: true };
+    if (kind === "strike") return { snippet: "~~" + selected + "~~", block: false, replace: true };
+    if (kind === "quote") return { snippet: prefixMarkdownLines(selected, "> "), block: true, replace: true };
+    if (kind === "link") return { snippet: "[" + selected + "](url)", block: false, replace: true };
+    if (kind === "image") return { snippet: "![alt text](" + selected.trim() + ")", block: false, replace: true };
+    if (kind === "code") {
+      const code = markdownCodeSnippet(selected);
+      return { snippet: code.snippet, block: code.block, replace: true };
+    }
+    if (kind === "codeblock") return { snippet: markdownCodeFence(selected), block: true, replace: true };
+    return null;
+  }
+
+  function applyPublishMarkdown(kind) {
+    const body = $("#publishBody");
+    if (!body || !kind) return;
+    const value = body.value;
+    const range = publishBodyRange(body);
+    const selStart = Math.max(0, Math.min(range.start, value.length));
+    const selEnd = Math.max(selStart, Math.min(range.end, value.length));
+    const selected = value.slice(selStart, selEnd);
+    const plan = markdownInsert(kind, selected);
+    if (!plan) return;
+    let from = selStart;
+    let to = selEnd;
+    if (!plan.replace) {
+      from = range.direction === "backward" ? selStart : selEnd;
+      to = from;
+    }
+    let lead = "";
+    let trail = "";
+    if (plan.block) {
+      const before = value.slice(0, from);
+      const after = value.slice(to);
+      if (before && !/\n$/.test(before)) lead = "\n";
+      if (after && !/^\n/.test(after)) trail = "\n";
+    }
+    const text = lead + plan.snippet + trail;
+    const beforeValue = value;
+    body.focus();
+    body.setSelectionRange(from, to);
+    let used = false;
+    try {
+      used = document.execCommand("insertText", false, text);
+    } catch (err) {
+      used = false;
+    }
+    if (!used || body.value === beforeValue) {
+      body.value = beforeValue.slice(0, from) + text + beforeValue.slice(to);
+      body.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    const caret = from + lead.length + plan.snippet.length;
+    body.setSelectionRange(caret, caret);
+    publishBodySel = { start: caret, end: caret, direction: "none" };
+    closeMdMenu();
+  }
+
   function bindComposerMedia(root) {
     if (!root) return;
     root.addEventListener("click", (e) => {
       const attachBtn = e.target.closest(".composer-attach");
-      if (!attachBtn || attachBtn.id === "publishLocationBtn" || !root.contains(attachBtn)) return;
+      if (
+        !attachBtn ||
+        attachBtn.id === "publishLocationBtn" ||
+        attachBtn.id === "publishMdBtn" ||
+        !root.contains(attachBtn)
+      ) return;
       e.preventDefault();
       const composer = attachBtn.closest(".comment-composer");
       const input = composer && composer.querySelector(".composer-file");
@@ -11537,7 +11719,12 @@ let FILTER_LOW_REP = 20;
         return;
       }
       const attachBtn = e.target.closest(".composer-attach");
-      if (attachBtn && attachBtn.id !== "publishLocationBtn" && inInteractiveSurface(attachBtn)) {
+      if (
+        attachBtn &&
+        attachBtn.id !== "publishLocationBtn" &&
+        attachBtn.id !== "publishMdBtn" &&
+        inInteractiveSurface(attachBtn)
+      ) {
         e.preventDefault();
         const composer = attachBtn.closest(".comment-composer");
         const input = composer && composer.querySelector(".composer-file");
@@ -11721,6 +11908,19 @@ let FILTER_LOW_REP = 20;
     if (publishOverlay) {
       bindComposerMedia(publishOverlay);
       bindLocationDialog();
+      const publishBody = $("#publishBody");
+      if (publishBody) {
+        publishBody.addEventListener("keyup", rememberPublishBodySel);
+        publishBody.addEventListener("mouseup", rememberPublishBodySel);
+        publishBody.addEventListener("select", rememberPublishBodySel);
+        publishBody.addEventListener("pointerup", rememberPublishBodySel);
+      }
+      const publishMd = $("#publishMd");
+      if (publishMd) {
+        publishMd.addEventListener("pointerdown", (e) => {
+          if (e.target.closest("#publishMdBtn")) rememberPublishBodySel();
+        });
+      }
       publishOverlay.addEventListener("click", (e) => {
         if (e.target === publishOverlay) {
           const active = document.activeElement;
@@ -11737,6 +11937,17 @@ let FILTER_LOW_REP = 20;
         if (e.target.closest("#publishLocationBtn")) {
           e.preventDefault();
           openLocationDialog();
+          return;
+        }
+        if (e.target.closest("#publishMdBtn")) {
+          e.preventDefault();
+          toggleMdMenu();
+          return;
+        }
+        const mdItem = e.target.closest(".publish-md-item");
+        if (mdItem) {
+          e.preventDefault();
+          applyPublishMarkdown(mdItem.getAttribute("data-md") || "");
           return;
         }
         if (e.target.closest("#publishSubmit")) {
@@ -11775,6 +11986,13 @@ let FILTER_LOW_REP = 20;
             e.preventDefault();
             closeLocationDialog();
           }
+          return;
+        }
+        if (e.key === "Escape" && mdMenuOpen()) {
+          e.preventDefault();
+          closeMdMenu();
+          const mdBtn = $("#publishMdBtn");
+          if (mdBtn) mdBtn.focus();
           return;
         }
         if (e.target.id === "publishTagInput") {
@@ -11829,6 +12047,7 @@ let FILTER_LOW_REP = 20;
       if (document.visibilityState === "hidden") persistPublishDraftNow();
     });
     document.addEventListener("click", (e) => {
+      if (mdMenuOpen() && !e.target.closest("#publishMd")) closeMdMenu();
       if (!destMenuOpen()) return;
       if (e.target.closest("#publishDest")) return;
       closeDestMenu();
