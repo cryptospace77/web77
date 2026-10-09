@@ -4307,6 +4307,8 @@ body:has(#publishOverlay:not([hidden])) {
   top: calc(100% + 0.35rem);
   z-index: 8;
   min-width: 9.5rem;
+  max-height: min(70vh, 28rem);
+  overflow-y: auto;
   padding: 0.35rem;
   background: var(--bg-input);
   border: 1px solid var(--border-hot);
@@ -4330,6 +4332,7 @@ body:has(#publishOverlay:not([hidden])) {
   font-family: var(--font-mono);
   font-size: 0.9rem;
   text-align: left;
+  white-space: nowrap;
   cursor: pointer;
 }
 

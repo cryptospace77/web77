@@ -7850,6 +7850,150 @@ let FILTER_LOW_REP = 20;
     closeMdMenu();
   }
 
+  // A new post uses Publish in. An edit keeps the post's parent community.
+  function publishFileCommunity() {
+    if (editingComment()) return "";
+    if (publishEdit) return normalizeCommunityName(publishEdit.parentPermlink || "");
+    if (publishDest.type === "community") return normalizeCommunityName(publishDest.name);
+    return "";
+  }
+
+  function publishPostPayload() {
+    savePublishDraft();
+    const comment = editingComment();
+    const title = comment
+      ? String((publishEdit && publishEdit.title) || "")
+      : publishTitleDraft;
+    const tags = (comment ? (publishEdit && publishEdit.tags) || [] : publishTags).slice();
+    const community = publishFileCommunity();
+    const payload = {
+      app: "Crypto Space 77",
+      url: "cryptospace77.com",
+      version: APP_VERSION,
+      date: new Date().toISOString(),
+      title: title,
+    };
+    if (community) payload.community = community;
+    payload.post = publishBodyDraft;
+    payload.tags = tags;
+    return payload;
+  }
+
+  function publishPostFilename(title) {
+    const clean = String(title || "")
+      .trim()
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "")
+      .replace(/\s+/g, " ")
+      .slice(0, 80)
+      .trim();
+    return (clean || "post") + ".json";
+  }
+
+  function savePublishPostFile() {
+    const payload = publishPostPayload();
+    let url = "";
+    try {
+      const blob = new Blob([JSON.stringify(payload, null, 2) + "\n"], {
+        type: "application/json",
+      });
+      url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = publishPostFilename(payload.title);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (err) {
+      setPublishStatus("Could not save the post.", true);
+      return;
+    } finally {
+      if (url) window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+    }
+    setPublishStatus("Post saved.");
+  }
+
+  function tagsFromPublishFile(raw) {
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    raw.forEach((item) => {
+      const tag = normalizeTag(item);
+      if (!isValidTag(tag) || out.indexOf(tag) !== -1 || out.length >= MAX_TAGS) return;
+      out.push(tag);
+    });
+    return out;
+  }
+
+  function applyLoadedPublishPost(text) {
+    let data;
+    try {
+      data = JSON.parse(String(text || "").replace(/^\uFEFF/, ""));
+    } catch (err) {
+      setPublishStatus("That file is not valid JSON.", true);
+      return;
+    }
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      setPublishStatus("That file is not a post.", true);
+      return;
+    }
+    if (typeof data.title !== "string" && typeof data.post !== "string") {
+      setPublishStatus("That file is not a post.", true);
+      return;
+    }
+    const title = typeof data.title === "string" ? data.title : "";
+    const post = typeof data.post === "string" ? data.post : "";
+    const comment = editingComment();
+    if (!comment) {
+      const titleEl = $("#publishTitle");
+      if (titleEl) titleEl.value = title.slice(0, 255);
+      publishTags = tagsFromPublishFile(data.tags);
+      const tagInput = $("#publishTagInput");
+      if (tagInput) tagInput.value = "";
+      paintPublishTags();
+    }
+    const body = $("#publishBody");
+    if (body) body.value = post;
+    publishBodySel = null;
+    let skippedCommunity = false;
+    if (!publishEdit) {
+      const rawCommunity = data.community;
+      const community =
+        typeof rawCommunity === "string" ? normalizeCommunityName(rawCommunity) : "";
+      if (community) {
+        const found = publishSubs.find((c) => normalizeCommunityName(c.name) === community);
+        publishDest = {
+          type: "community",
+          name: found ? found.name : community,
+          title: (found && found.title) || community,
+        };
+      } else {
+        if (typeof rawCommunity === "string" && rawCommunity.trim()) skippedCommunity = true;
+        publishDest = { type: "blog", name: "", title: "My blog" };
+      }
+      paintPublishDest();
+      renderDestMenu();
+    }
+    savePublishDraft();
+    updatePublishPreview();
+    schedulePublishDraftSave();
+    setPublishStatus(
+      skippedCommunity
+        ? "Post loaded. The community was not a hive id, so this publishes to your blog."
+        : "Post loaded."
+    );
+  }
+
+  function loadPublishPostFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      applyLoadedPublishPost(typeof reader.result === "string" ? reader.result : "");
+    };
+    reader.onerror = () => {
+      setPublishStatus("Could not read that file.", true);
+    };
+    reader.readAsText(file);
+  }
+
   function bindComposerMedia(root) {
     if (!root) return;
     root.addEventListener("click", (e) => {
@@ -11921,6 +12065,14 @@ let FILTER_LOW_REP = 20;
           if (e.target.closest("#publishMdBtn")) rememberPublishBodySel();
         });
       }
+      const publishPostFile = $("#publishPostFile");
+      if (publishPostFile) {
+        publishPostFile.addEventListener("change", () => {
+          const file = publishPostFile.files && publishPostFile.files[0];
+          publishPostFile.value = "";
+          if (file) loadPublishPostFile(file);
+        });
+      }
       publishOverlay.addEventListener("click", (e) => {
         if (e.target === publishOverlay) {
           const active = document.activeElement;
@@ -11947,7 +12099,22 @@ let FILTER_LOW_REP = 20;
         const mdItem = e.target.closest(".publish-md-item");
         if (mdItem) {
           e.preventDefault();
-          applyPublishMarkdown(mdItem.getAttribute("data-md") || "");
+          const kind = mdItem.getAttribute("data-md") || "";
+          if (kind === "load") {
+            closeMdMenu();
+            const input = $("#publishPostFile");
+            if (input) {
+              input.value = "";
+              input.click();
+            }
+            return;
+          }
+          if (kind === "save") {
+            closeMdMenu();
+            savePublishPostFile();
+            return;
+          }
+          applyPublishMarkdown(kind);
           return;
         }
         if (e.target.closest("#publishSubmit")) {
