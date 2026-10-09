@@ -251,6 +251,128 @@
     return s;
   }
 
+  // A line of nothing but tags. Quote-aware, so a ">" inside an attribute
+  // does not end the tag early.
+  function isOpaqueHtmlLine(line) {
+    let i = 0;
+    let sawTag = false;
+    while (i < line.length) {
+      const ch = line.charAt(i);
+      if (ch === " " || ch === "\t") {
+        i++;
+        continue;
+      }
+      if (line.startsWith("<!--", i)) {
+        const end = line.indexOf("-->", i + 4);
+        if (end < 0) return false;
+        sawTag = true;
+        i = end + 3;
+        continue;
+      }
+      if (ch !== "<") return false;
+      const tag = parseHtmlTagAt(line, i);
+      if (!tag) return false;
+      sawTag = true;
+      i = tag.end;
+    }
+    return sawTag;
+  }
+
+  // <img> on its own line, or a line whose only content is an image wrapped
+  // in presentational tags such as <center> or <a>.
+  function isImageBlockLine(line) {
+    return /<img\b/i.test(line) && isOpaqueHtmlLine(line);
+  }
+
+  function renderSwallowedMarkdown(text) {
+    const styled = renderMarkdownInStylingTags(text);
+    const html = renderTextSegment(styled);
+    const trimmed = unwrapSingleParagraph(String(html).replace(/^\n+|\n+$/g, ""));
+    return trimmed || text;
+  }
+
+  // CommonMark treats a line that is only an <img> as an HTML block and keeps
+  // every following line, up to a blank line, as raw HTML. *caption* under a
+  // photo then stays literal asterisks. Parse that swallowed markdown first
+  // so the italics are already <em> when the block is copied through.
+  function revealMarkdownAfterImages(src) {
+    const lines = String(src || "").split("\n");
+    const out = [];
+    const fence = { inFence: false, fenceMark: "" };
+    let rawSkip = "";
+    let i = 0;
+
+    function inRawRegion(line) {
+      if (fence.inFence) {
+        const end = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(line);
+        if (end && end[1][0] === fence.fenceMark) {
+          fence.inFence = false;
+          fence.fenceMark = "";
+        }
+        return true;
+      }
+      const start = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(line);
+      if (start) {
+        fence.inFence = true;
+        fence.fenceMark = start[1][0];
+        return true;
+      }
+      if (rawSkip) {
+        if (new RegExp("</" + rawSkip + "\\s*>", "i").test(line)) rawSkip = "";
+        return true;
+      }
+      const rawOpen = /^[ \t]{0,3}<(pre|script|style|textarea)\b/i.exec(line);
+      if (rawOpen && !new RegExp("</" + rawOpen[1] + "\\s*>", "i").test(line)) {
+        rawSkip = rawOpen[1];
+        return true;
+      }
+      return false;
+    }
+
+    while (i < lines.length) {
+      const line = lines[i];
+      if (inRawRegion(line) || !isImageBlockLine(line)) {
+        out.push(line);
+        i++;
+        continue;
+      }
+      out.push(line);
+      i++;
+      const bucket = [];
+      while (i < lines.length && lines[i].trim() !== "") {
+        const next = lines[i];
+        if (
+          !fence.inFence &&
+          !rawSkip &&
+          (/^[ \t]{0,3}(`{3,}|~{3,})/.test(next) ||
+            /^[ \t]{0,3}<(pre|script|style|textarea)\b/i.test(next))
+        ) {
+          break;
+        }
+        bucket.push(next);
+        i++;
+      }
+      let run = [];
+      const flush = () => {
+        if (!run.length) return;
+        const text = run.join("\n");
+        run = [];
+        out.push(looksLikeMarkdown(text) ? renderSwallowedMarkdown(text) : text);
+      };
+      for (let n = 0; n < bucket.length; n++) {
+        const part = bucket[n];
+        if (isImageBlockLine(part) || isOpaqueHtmlLine(part)) {
+          flush();
+          out.push(part);
+        } else {
+          run.push(part);
+        }
+      }
+      flush();
+    }
+    return out.join("\n");
+  }
+
   function preprocessHiveMarkdown(src) {
     let s = String(src || "").replace(/\r\n/g, "\n");
     s = replaceWorldmappinSnippets(s);
@@ -267,11 +389,12 @@
       /^(https?:\/\/(?:(?:i|images)\.ecency\.com|(?:i|img|images|cdn|files|media)\.inleo\.io)\/[^\s]+)\s*$/gim,
       "![]($1)"
     );
-    // ![alt](url "title") → <img> so HTML blocks cannot swallow it.
+    // ![alt](url "title") → <img> so HTML blocks cannot swallow the image.
     // Bare media URLs stay plain text. embedMedia turns those into players,
     // and the last step links whatever URL text is left. A markdown link
     // such as [source](url) is not wrapped again.
     s = replaceMarkdownImages(s);
+    s = revealMarkdownAfterImages(s);
     return s;
   }
 
