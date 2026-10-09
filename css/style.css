@@ -1997,11 +1997,18 @@ a.community:hover {
   font-size: 1.05rem;
   line-height: 1.55;
   color: var(--gray);
+  overflow-wrap: break-word;
+}
+
+.card-excerpt-clamp {
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  overflow-wrap: break-word;
+}
+
+.card-excerpt-pre-wrap {
+  white-space: pre-wrap;
 }
 
 .card-excerpt a {

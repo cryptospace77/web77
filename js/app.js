@@ -6577,6 +6577,25 @@ let FILTER_LOW_REP = 20;
     return true;
   }
 
+  function isCommentsOrRepliesFeed() {
+    return (
+      feedState.kind === "profile" &&
+      (feedState.sort === "comments" || feedState.sort === "replies")
+    );
+  }
+
+  function cardExcerptHtml(post) {
+    if (isCommentsOrRepliesFeed()) {
+      return `<p class="card-excerpt card-excerpt-pre-wrap">${HiveMd.excerpt(post, 1000, {
+        preserveLineBreaks: true,
+      })}</p>`;
+    }
+    return `<p class="card-excerpt card-excerpt-clamp">${HiveMd.excerpt(post, 200, {
+      preserveLineBreaks: false,
+      maxLines: 3,
+    })}</p>`;
+  }
+
   function cardHtml(post) {
     const shown = cardDisplayPost(post) || post;
     const share = shareLineHtml(post);
@@ -6611,7 +6630,7 @@ let FILTER_LOW_REP = 20;
         <a class="card-hit" href="${HiveMd.escapeHtml(postPath(shown))}">
           <h2>${HiveMd.escapeHtml(shown.title || "(untitled)")}</h2>
         </a>
-        <p class="card-excerpt">${HiveMd.excerpt(shown, 200, { preserveLineBreaks: false, maxLines: 3 })}</p>
+        ${cardExcerptHtml(shown)}
         ${thumb ? `<a class="card-thumb-link" href="${HiveMd.escapeHtml(postPath(shown))}">${thumb}</a>` : ""}
         <div class="card-stats">
           ${voteControlHtml(shown, "pills")}
