@@ -549,19 +549,23 @@
 
   // maxLen is the length of the returned text. The ellipsis is one of those characters.
   // A word that ends inside the budget stays. A word cut in half is left off.
+  // abbreviated is false when only leading or trailing space was removed.
   function clipExcerpt(text, maxLen, firstSentence) {
     const limit = Number(maxLen) > 0 ? Math.floor(Number(maxLen)) : 180;
     const src = String(text || "").replace(/^\s+/, "");
-    if (!src || limit < 1) return "";
+    if (!src || limit < 1) return { text: "", abbreviated: false };
     if (firstSentence) {
       const sentence = firstSentenceEnd(src);
       if (sentence > 0 && sentence <= limit) {
-        return src.slice(0, sentence).replace(/[ \t]+$/, "");
+        return {
+          text: src.slice(0, sentence).replace(/[ \t]+$/, ""),
+          abbreviated: /\S/.test(src.slice(sentence)),
+        };
       }
     }
-    if (src.length <= limit) return src.replace(/\s+$/, "");
+    if (src.length <= limit) return { text: src.replace(/\s+$/, ""), abbreviated: false };
     const budget = limit - 1;
-    if (budget <= 0) return "…";
+    if (budget <= 0) return { text: "…", abbreviated: true };
     let end = budget;
     if (end < src.length) {
       const lead = src.charCodeAt(end - 1);
@@ -576,8 +580,8 @@
       if (trimmed.trim()) slice = trimmed;
     }
     slice = slice.replace(/[\s\u00a0]+$/, "");
-    if (!slice) return "…";
-    return slice + "…";
+    if (!slice) return { text: "…", abbreviated: true };
+    return { text: slice + "…", abbreviated: true };
   }
 
   function excerptLineLimit(value) {
@@ -606,13 +610,13 @@
   function clipExcerptLines(text, maxLines) {
     const limit = excerptLineLimit(maxLines);
     const src = String(text || "");
-    if (!src || !limit) return src;
+    if (!src || !limit) return { text: src, abbreviated: false };
     const lines = src.split("\n");
-    if (lines.length <= limit) return src;
+    if (lines.length <= limit) return { text: src, abbreviated: false };
     const kept = lines.slice(0, limit).join("\n").replace(/[ \t\u00a0]+$/, "");
-    if (!kept) return "…";
-    if (kept.charAt(kept.length - 1) === "…") return kept;
-    return kept + "…";
+    if (!kept) return { text: "…", abbreviated: true };
+    if (kept.charAt(kept.length - 1) === "…") return { text: kept, abbreviated: true };
+    return { text: kept + "…", abbreviated: true };
   }
 
   function linkifyUsernames(text) {
@@ -639,6 +643,7 @@
   // maxLines counts newline-separated output lines and abbreviates after that.
   // The ellipsis counts. Only @usernames become links.
   // compactNewlines folds every break into one line when preserveLineBreaks is on.
+  // Returns { html, abbreviated }. abbreviated is true when the clip drops post text.
   function excerpt(post, maxLen, preserveLineBreaks, firstSentence, compactNewlines, maxLines) {
     const opts = excerptMode(preserveLineBreaks, firstSentence, compactNewlines, maxLines);
     let text = stripMarkdown(post && post.body, opts.preserveLineBreaks);
@@ -646,8 +651,12 @@
     text = stripPlainUrls(text, opts.preserveLineBreaks);
     text = sanitizeExcerptText(text);
     if (opts.preserveLineBreaks && opts.compactNewlines) text = text.replace(/\n{2,}/g, "\n");
-    text = clipExcerptLines(text, opts.maxLines);
-    return linkifyUsernames(clipExcerpt(text, maxLen, opts.firstSentence));
+    const lined = clipExcerptLines(text, opts.maxLines);
+    const clipped = clipExcerpt(lined.text, maxLen, opts.firstSentence);
+    return {
+      html: linkifyUsernames(clipped.text),
+      abbreviated: lined.abbreviated || clipped.abbreviated,
+    };
   }
 
   /** Extract a YouTube video id from a URL string, or empty string. */

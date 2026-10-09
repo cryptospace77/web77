@@ -2005,6 +2005,9 @@ a.community:hover {
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  position: relative;
+  z-index: 1;
+  cursor: pointer;
 }
 
 .card-excerpt-pre-wrap {

@@ -168,6 +168,10 @@ let FILTER_LOW_REP = 20;
     gen: 0,
   };
 
+  // Post cards whose excerpt was opened inline. Cleared when the feed changes.
+  // Profile comments and replies stay on the long preview and are not tracked.
+  const expandedCardExcerpts = new Set();
+
   function observer() {
     return sessionStorage.getItem(SESSION_KEY) || "";
   }
@@ -3351,6 +3355,7 @@ let FILTER_LOW_REP = 20;
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
       return;
     }
+    if (expandClampedCardExcerpt(e)) return;
     const a = e.target.closest("a[href]");
     if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
     const href = a.getAttribute("href");
@@ -6258,6 +6263,7 @@ let FILTER_LOW_REP = 20;
     feedState.loading = false;
     feedState.done = false;
     feedState.gen += 1;
+    expandedCardExcerpts.clear();
   }
 
   function isFollowingFeed() {
@@ -6584,16 +6590,100 @@ let FILTER_LOW_REP = 20;
     );
   }
 
-  function cardExcerptHtml(post) {
-    if (isCommentsOrRepliesFeed()) {
-      return `<p class="card-excerpt card-excerpt-pre-wrap">${HiveMd.excerpt(post, 1000, {
-        preserveLineBreaks: true,
-      })}</p>`;
-    }
-    return `<p class="card-excerpt card-excerpt-clamp">${HiveMd.excerpt(post, 200, {
+  function cardExcerptKey(post) {
+    if (!post || !post.author || !post.permlink) return "";
+    return snapKey(post.author, post.permlink);
+  }
+
+  function cardExcerptShort(post) {
+    return HiveMd.excerpt(post, 200, {
       preserveLineBreaks: false,
       maxLines: 3,
-    })}</p>`;
+    });
+  }
+
+  function cardExcerptLong(post) {
+    return HiveMd.excerpt(post, 1000, { preserveLineBreaks: true });
+  }
+
+  function cardExcerptLongHtml(post) {
+    return `<p class="card-excerpt card-excerpt-pre-wrap">${cardExcerptLong(post).html}</p>`;
+  }
+
+  function cardExcerptHtml(post) {
+    if (isCommentsOrRepliesFeed() || expandedCardExcerpts.has(cardExcerptKey(post))) {
+      return cardExcerptLongHtml(post);
+    }
+    return `<p class="card-excerpt card-excerpt-clamp">${cardExcerptShort(post).html}</p>`;
+  }
+
+  // The line clamp is a max. A short post stays shorter than three lines.
+  function clampCssAbbreviates(el) {
+    if (!el || !el.parentNode) return false;
+    const shown = el.offsetHeight;
+    const width = el.getBoundingClientRect().width;
+    if (!shown || !width) return false;
+    const clone = el.cloneNode(true);
+    clone.classList.remove("card-excerpt-clamp");
+    clone.setAttribute("aria-hidden", "true");
+    clone.style.position = "absolute";
+    clone.style.left = "0";
+    clone.style.top = "0";
+    clone.style.visibility = "hidden";
+    clone.style.pointerEvents = "none";
+    clone.style.boxSizing = "border-box";
+    clone.style.width = width + "px";
+    clone.style.height = "auto";
+    clone.style.maxHeight = "none";
+    clone.style.overflow = "visible";
+    clone.style.display = "block";
+    clone.style.webkitLineClamp = "unset";
+    clone.style.webkitBoxOrient = "unset";
+    el.parentNode.appendChild(clone);
+    const full = clone.offsetHeight;
+    clone.remove();
+    return full > shown + 1;
+  }
+
+  function showCardExcerptPreview(excerpt, post) {
+    expandedCardExcerpts.add(cardExcerptKey(post));
+    excerpt.classList.remove("card-excerpt-clamp");
+    excerpt.classList.add("card-excerpt-pre-wrap");
+    excerpt.innerHTML = cardExcerptLong(post).html;
+  }
+
+  function openCardPost(card) {
+    const hit = card.querySelector("a.card-hit");
+    const href = hit && hit.getAttribute("href");
+    if (!href) return false;
+    navigate(href);
+    return true;
+  }
+
+  // A clamped excerpt opens the longer preview when text is still hidden.
+  // The excerpt flag covers the character and line clip. The clamp check
+  // covers wrapping. A full post opens immediately. Mentions keep their links.
+  function expandClampedCardExcerpt(e) {
+    const el = eventElement(e.target);
+    if (!el || el.closest("a[href]")) return false;
+    const excerpt = el.closest(".card-excerpt-clamp");
+    if (!excerpt) return false;
+    const card = excerpt.closest("article.post-card");
+    if (!card) return false;
+    const loaded = findLoadedPost(
+      card.getAttribute("data-author"),
+      card.getAttribute("data-permlink")
+    );
+    const shown = cardDisplayPost(loaded);
+    if (!shown) return false;
+    e.preventDefault();
+    const shortExcerpt = cardExcerptShort(shown);
+    if (shortExcerpt.abbreviated || clampCssAbbreviates(excerpt)) {
+      showCardExcerptPreview(excerpt, shown);
+      return true;
+    }
+    openCardPost(card);
+    return true;
   }
 
   function cardHtml(post) {
